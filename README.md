@@ -1,2 +1,0 @@
-# UnitasOS
-Our operating system.
