@@ -40,6 +40,7 @@ struct nvme_queue {
     uint16_t completion_head;
     uint8_t completion_phase;
     uint16_t next_command_id;
+    bool failed;
 };
 
 struct nvme_device {
@@ -104,11 +105,13 @@ static void queue_init(struct nvme_queue *queue, struct nvme_command *submission
     queue->completion_head = 0;
     queue->completion_phase = 1;
     queue->next_command_id = 1;
+    queue->failed = false;
     set_doorbells(queue, queue_id);
 }
 
 static int submit(struct nvme_queue *queue, struct nvme_command *command,
                   uint32_t *result) {
+    if (queue->failed) return -1;
     uint16_t command_id = queue->next_command_id++;
     command->command_id_opcode = (command->command_id_opcode & 0xffffu) |
                                  ((uint32_t)command_id << 16);
@@ -127,6 +130,7 @@ static int submit(struct nvme_queue *queue, struct nvme_command *command,
         if (completed_id != command_id) {
             log_write(LOG_WARN, "NVMe completion ID mismatch. Expected %u got %u\n",
                       command_id, completed_id);
+            queue->failed = true;
             return -1;
         }
         int error = (status >> 17) & 0x7fff;
@@ -140,6 +144,7 @@ static int submit(struct nvme_queue *queue, struct nvme_command *command,
         return error ? -1 : 0;
     }
     log_write(LOG_WARN, "NVMe command completion timed out\n");
+    queue->failed = true;
     return -1;
 }
 
@@ -182,6 +187,7 @@ static int create_io_queues(void) {
 static int nvme_transfer(struct nvme_device *device, uint64_t lba,
                          uint32_t count, void *buffer, bool write) {
     while (count) {
+        if (device->io.failed) return -1;
         uint32_t page_sectors = 4096 / BLOCK_SECTOR_SIZE;
         uint32_t chunk = count > page_sectors ? page_sectors : count;
         if (write) memcpy(device->data_page, buffer, (size_t)chunk * BLOCK_SECTOR_SIZE);
@@ -287,8 +293,9 @@ static void find_nvme(const struct pci_device *device, void *context) {
     controller.namespace_id = 1;
     controller.sectors = *(uint64_t *)identify_page;
     uint8_t format_index = identify_page[26] & 0x0f;
+    uint8_t last_format_index = identify_page[25] & 0x0f;
     uint8_t sector_shift = identify_page[130 + format_index * 4];
-    if (!controller.sectors || sector_shift != 9) {
+    if (!controller.sectors || format_index > last_format_index || sector_shift != 9) {
         log_write(LOG_WARN, "NVMe namespace uses an unsupported sector size\n");
         registers = 0;
         return;

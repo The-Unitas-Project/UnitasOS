@@ -28,14 +28,21 @@ struct fat_directory_entry {
     uint32_t size;
 } __attribute__((packed));
 
+#define FAT_MAX_OPEN_FILES 64
+struct fat_open_file {
+    struct fat_directory_entry *entry;
+    bool used;
+};
+
 _Static_assert(sizeof(struct fat_directory_entry) == 32, "FAT directory entry size");
 
-/* A 64 MiB volume with 512-byte clusters meets FAT32's minimum cluster count. */
+/* 64 MiB with 512-byte clusters meets FAT32's minimum cluster count. */
 static uint8_t ram_volume[RAM_VOLUME_BYTES] __attribute__((aligned(4096)));
 static uint32_t fat_sectors;
 static uint32_t data_start_sector;
 static uint32_t cluster_count;
 static uint32_t next_free_cluster = 3;
+static struct fat_open_file open_files[FAT_MAX_OPEN_FILES];
 
 static uint8_t *sector(uint32_t number) {
     return ram_volume + (size_t)number * FAT_SECTOR_SIZE;
@@ -165,8 +172,21 @@ static struct fat_directory_entry *create_entry(const uint8_t name[11]) {
         uint32_t added = allocate_cluster();
         if (!added) return 0;
         fat_set(cluster, added);
-        return (struct fat_directory_entry *)cluster_data(added);
+        struct fat_directory_entry *entry = (void *)cluster_data(added);
+        memcpy(entry->name, name, 11);
+        entry->attributes = 0x20;
+        return entry;
     }
+}
+
+static struct fat_open_file *allocate_open_file(struct fat_directory_entry *entry) {
+    for (size_t i = 0; i < FAT_MAX_OPEN_FILES; ++i) {
+        if (open_files[i].used) continue;
+        open_files[i].entry = entry;
+        open_files[i].used = true;
+        return &open_files[i];
+    }
+    return 0;
 }
 
 static int fat_open(const char *path, uint32_t flags, void *data, void **node) {
@@ -177,18 +197,21 @@ static int fat_open(const char *path, uint32_t flags, void *data, void **node) {
     if (!entry && !(flags & VFS_OPEN_CREATE)) return -1;
     if (!entry) entry = create_entry(name);
     if (!entry || (entry->attributes & FAT_ATTR_DIRECTORY)) return -1;
+    struct fat_open_file *file = allocate_open_file(entry);
+    if (!file) return -1;
     if (flags & VFS_OPEN_TRUNCATE) {
         free_chain(entry_cluster(entry));
         set_entry_cluster(entry, 0);
         entry->size = 0;
     }
-    *node = entry;
+    *node = file;
     return 0;
 }
 
 static int fat_read(void *node, uint64_t offset, void *buffer, size_t length) {
-    struct fat_directory_entry *entry = node;
-    if (!entry || (!buffer && length)) return -1;
+    struct fat_open_file *file = node;
+    if (!file || !file->used || !file->entry || (!buffer && length)) return -1;
+    struct fat_directory_entry *entry = file->entry;
     if (offset >= entry->size) return 0;
     if (length > entry->size - offset) length = entry->size - (size_t)offset;
     if (length > INT_MAX) length = INT_MAX;
@@ -253,12 +276,15 @@ static void write_bytes(struct fat_directory_entry *entry, uint64_t offset,
 }
 
 static int fat_write(void *node, uint64_t offset, const void *buffer, size_t length) {
-    struct fat_directory_entry *entry = node;
-    if (!entry || (!buffer && length) || offset > UINT32_MAX || length > INT_MAX ||
+    struct fat_open_file *file = node;
+    if (!file || !file->used || !file->entry || (!buffer && length) ||
+        offset > UINT32_MAX || length > INT_MAX ||
         length > UINT32_MAX - offset) return -1;
+    struct fat_directory_entry *entry = file->entry;
     if (length == 0) return 0;
     uint64_t new_end = offset + length;
     size_t needed = (size_t)((new_end + FAT_SECTOR_SIZE - 1) / FAT_SECTOR_SIZE);
+    if (needed > cluster_count) return -1;
     if (!ensure_chain(entry, needed)) return -1;
     if (offset > entry->size) {
         static const uint8_t zeros[FAT_SECTOR_SIZE];
@@ -280,15 +306,24 @@ static int fat_unlink(const char *path, void *data) {
     if (!make_short_name(path, name)) return -1;
     struct fat_directory_entry *entry = find_entry(name);
     if (!entry) return -1;
+    for (size_t i = 0; i < FAT_MAX_OPEN_FILES; ++i)
+        if (open_files[i].used && open_files[i].entry == entry) return -1;
     free_chain(entry_cluster(entry));
     entry->name[0] = 0xe5;
     entry->size = 0;
     return 0;
 }
 
+static void fat_close(void *node) {
+    struct fat_open_file *file = node;
+    if (!file || !file->used) return;
+    file->entry = 0;
+    file->used = false;
+}
+
 static void format_volume(void) {
     memset(ram_volume, 0, sizeof(ram_volume));
-    /* The 1,024-sector FAT has spare entries to avoid an edge-case rounding loop. */
+    /* This FAT has spare entries, so it can index every data cluster. */
     fat_sectors = 1024;
     cluster_count = RAM_TOTAL_SECTORS - FAT_RESERVED_SECTORS - FAT_COUNT * fat_sectors;
     data_start_sector = FAT_RESERVED_SECTORS + FAT_COUNT * fat_sectors;
@@ -323,7 +358,7 @@ static void format_volume(void) {
     uint8_t *info = sector(1);
     store_le32(info, 0x41615252);
     store_le32(info + 484, 0x61417272);
-    /* Unknown FSInfo hints are valid and cannot become stale after file writes. */
+    /* FSInfo free-cluster hints are unknown because writes do not update them. */
     store_le32(info + 488, 0xffffffff);
     store_le32(info + 492, 0xffffffff);
     store_le32(info + 508, 0xaa550000);
@@ -373,6 +408,7 @@ static const struct filesystem ram_fat32 = {
     .open = fat_open,
     .read = fat_read,
     .write = fat_write,
+    .close = fat_close,
     .unlink = fat_unlink,
     .readdir = fat_readdir
 };

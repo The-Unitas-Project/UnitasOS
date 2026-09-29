@@ -1,5 +1,6 @@
 #include <kern/string.h>
 #include <kern/vfs.h>
+#include <limits.h>
 
 #define VFS_MAX_FILESYSTEMS 16
 #define VFS_MAX_MOUNTS 32
@@ -23,8 +24,14 @@ static struct mount mounts[VFS_MAX_MOUNTS];
 static struct open_file handles[VFS_MAX_HANDLES];
 static size_t filesystem_count, mount_count;
 
-static bool valid_mountpoint(const char *path) {
+static bool valid_path(const char *path) {
     return path && path[0] == '/' && strlen(path) < VFS_PATH_MAX;
+}
+
+static bool valid_mountpoint(const char *path) {
+    if (!valid_path(path)) return false;
+    size_t length = strlen(path);
+    return length == 1 || path[length - 1] != '/';
 }
 
 int vfs_register(const struct filesystem *filesystem) {
@@ -71,7 +78,8 @@ static struct mount *find_mount(const char *path) {
 }
 
 int vfs_open(const char *path, uint32_t flags, int *handle) {
-    if (!path || path[0] != '/' || !handle || strlen(path) >= VFS_PATH_MAX) return -1;
+    if (!valid_path(path) || !handle ||
+        (flags & ~(VFS_OPEN_CREATE | VFS_OPEN_TRUNCATE))) return -1;
     struct mount *mount = find_mount(path);
     if (!mount || !mount->filesystem->open) return -1;
     size_t prefix_length = strlen(mount->path);
@@ -83,7 +91,7 @@ int vfs_open(const char *path, uint32_t flags, int *handle) {
     if (slot == VFS_MAX_HANDLES) return -1;
     void *node = 0;
     int result = mount->filesystem->open(relative, flags, mount->data, &node);
-    if (result < 0) return result;
+    if (result != 0) return result < 0 ? result : -1;
     handles[slot] = (struct open_file){ true, mount->filesystem, node, 0 };
     *handle = (int)slot;
     return 0;
@@ -96,17 +104,27 @@ static struct open_file *get_handle(int handle) {
 
 int vfs_read(int handle, void *buffer, size_t length) {
     struct open_file *file = get_handle(handle);
-    if (!file || !file->filesystem->read || (!buffer && length)) return -1;
+    if (!file || !file->filesystem->read || (!buffer && length) || length > INT_MAX)
+        return -1;
     int result = file->filesystem->read(file->node, file->offset, buffer, length);
-    if (result > 0) file->offset += (uint64_t)result;
+    if (result > 0) {
+        if ((size_t)result > length || (uint64_t)result > UINT64_MAX - file->offset)
+            return -1;
+        file->offset += (uint64_t)result;
+    }
     return result;
 }
 
 int vfs_write(int handle, const void *buffer, size_t length) {
     struct open_file *file = get_handle(handle);
-    if (!file || !file->filesystem->write || (!buffer && length)) return -1;
+    if (!file || !file->filesystem->write || (!buffer && length) || length > INT_MAX)
+        return -1;
     int result = file->filesystem->write(file->node, file->offset, buffer, length);
-    if (result > 0) file->offset += (uint64_t)result;
+    if (result > 0) {
+        if ((size_t)result > length || (uint64_t)result > UINT64_MAX - file->offset)
+            return -1;
+        file->offset += (uint64_t)result;
+    }
     return result;
 }
 
@@ -119,7 +137,7 @@ int vfs_close(int handle) {
 }
 
 int vfs_unlink(const char *path) {
-    if (!path) return -1;
+    if (!valid_path(path)) return -1;
     struct mount *mount = find_mount(path);
     if (!mount || !mount->filesystem->unlink) return -1;
     const char *relative = strcmp(mount->path, "/") == 0 ? path : path + strlen(mount->path);
@@ -128,10 +146,20 @@ int vfs_unlink(const char *path) {
 }
 
 int vfs_readdir(const char *path, uint64_t index, struct vfs_dirent *entry) {
-    if (!path || !entry) return -1;
+    if (!valid_path(path) || !entry) return -1;
     struct mount *mount = find_mount(path);
     if (!mount || !mount->filesystem->readdir) return -1;
     const char *relative = strcmp(mount->path, "/") == 0 ? path : path + strlen(mount->path);
     if (!*relative) relative = "/";
-    return mount->filesystem->readdir(relative, mount->data, index, entry);
+    struct vfs_dirent result_entry;
+    int result = mount->filesystem->readdir(relative, mount->data, index, &result_entry);
+    if (result <= 0) return result;
+    if (result != 1) return -1;
+    for (size_t i = 0; i < sizeof(result_entry.name); ++i) {
+        if (!result_entry.name[i]) {
+            *entry = result_entry;
+            return 1;
+        }
+    }
+    return -1;
 }

@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-/* x86 port I/O is isolated here so drivers do not embed compiler asm. */
+/* Keep x86 port I/O instructions in this header. */
 static inline void outb(uint16_t port, uint8_t value) {
     __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
 }

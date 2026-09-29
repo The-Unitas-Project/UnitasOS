@@ -1,4 +1,4 @@
-/* The bootstrap enters at a low physical address and identity maps early RAM. */
+/* Link the kernel low because the bootstrap maps its addresses 1:1. */
 ENTRY(_start)
 SECTIONS
 {

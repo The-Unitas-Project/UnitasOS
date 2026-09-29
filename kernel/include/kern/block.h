@@ -19,6 +19,10 @@ struct block_device {
     int (*flush)(struct block_device *device);
 };
 
+/* Callbacks use 512-byte sectors and return 0 on success or a negative error. */
+/* Read and write buffers may have byte alignment only. */
+/* block_read/write check the LBA range before calling the driver. */
+/* Registration keeps this pointer; the driver must keep the device alive. */
 int block_register(struct block_device *device);
 size_t block_device_count(void);
 struct block_device *block_device_at(size_t index);

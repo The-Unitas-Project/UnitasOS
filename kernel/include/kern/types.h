@@ -1,7 +1,7 @@
 #ifndef UNITAS_KERN_TYPES_H
 #define UNITAS_KERN_TYPES_H
 
-/* Fixed-width types keep hardware and wire-format layouts explicit. */
+/* Use fixed-width integers for hardware registers and on-disk fields. */
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>

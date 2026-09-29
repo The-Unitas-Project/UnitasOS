@@ -20,7 +20,7 @@ static const char keymap[128] = {
 static void keyboard_irq(struct interrupt_frame *frame) {
     (void)frame;
     uint8_t code = inb(0x60);
-    /* The initial driver handles set-1 make codes. Break and extended codes are ignored. */
+    /* Ignore break codes and unmapped keys; extended sequences are not decoded. */
     if (!(code & 0x80) && code < sizeof(keymap) && keymap[code])
         (void)byte_ring_push(&queue, (uint8_t)keymap[code]);
 }
@@ -32,8 +32,13 @@ void keyboard_init(void) {
 }
 
 bool keyboard_read_char(char *out) {
+    if (!out) return false;
+    /* The IRQ producer must not update the queue while the main loop pops. */
+    uintptr_t flags;
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) : : "memory");
     uint8_t value;
-    if (!out || !byte_ring_pop(&queue, &value)) return false;
-    *out = (char)value;
-    return true;
+    bool available = byte_ring_pop(&queue, &value);
+    if (available) *out = (char)value;
+    if (flags & (1u << 9)) __asm__ volatile("sti" : : : "memory");
+    return available;
 }

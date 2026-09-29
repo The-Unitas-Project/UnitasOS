@@ -1,6 +1,6 @@
 #include <stddef.h>
 
-/* Freestanding replacements used by the kernel before a libc is available. */
+/* These routines replace libc functions in the freestanding kernel. */
 void *memset(void *destination, int value, size_t length) {
     unsigned char *out = destination;
     for (size_t i = 0; i < length; ++i) out[i] = (unsigned char)value;

@@ -14,21 +14,44 @@
 
 const struct multiboot2_mmap_tag *boot_memory_map(uintptr_t address,
                                                   size_t *tag_size) {
+    const uintptr_t boot_address_limit = 0x100000000ULL;
+    if (!tag_size || !address || address >= boot_address_limit ||
+        boot_address_limit - address < sizeof(struct multiboot2_info))
+        return 0;
     const struct multiboot2_info *info = (const void *)address;
-    if (!info || info->total_size < sizeof(*info) || info->total_size > 16 * 1024 * 1024)
+    if (info->total_size < sizeof(*info) ||
+        info->total_size > 16 * 1024 * 1024 ||
+        info->total_size > boot_address_limit - address)
         return 0;
     uintptr_t cursor = address + sizeof(*info);
     const uintptr_t end = address + info->total_size;
-    while (cursor + sizeof(struct multiboot2_tag) <= end) {
+    const struct multiboot2_mmap_tag *memory_map = 0;
+    size_t memory_map_size = 0;
+    while (cursor <= end && end - cursor >= sizeof(struct multiboot2_tag)) {
         const struct multiboot2_tag *tag = (const void *)cursor;
-        if (tag->size < sizeof(*tag) || cursor + tag->size > end) return 0;
-        if (tag->type == MULTIBOOT2_TAG_END) return 0;
-        if (tag->type == MULTIBOOT2_TAG_MEMORY_MAP) {
-            if (tag->size < sizeof(struct multiboot2_mmap_tag)) return 0;
-            *tag_size = tag->size;
-            return (const struct multiboot2_mmap_tag *)tag;
+        if (tag->size < sizeof(*tag) || tag->size > end - cursor) return 0;
+        if (tag->type == MULTIBOOT2_TAG_END) {
+            if (tag->size != sizeof(*tag) || cursor + tag->size != end ||
+                !memory_map)
+                return 0;
+            *tag_size = memory_map_size;
+            return memory_map;
         }
-        cursor = ALIGN_UP(cursor + tag->size, 8);
+        if (tag->type == MULTIBOOT2_TAG_MEMORY_MAP) {
+            if (memory_map || tag->size < sizeof(struct multiboot2_mmap_tag)) return 0;
+            const struct multiboot2_mmap_tag *candidate = (const void *)tag;
+            size_t entries_size = tag->size - sizeof(*candidate);
+            if (candidate->entry_version != 0 ||
+                candidate->entry_size < sizeof(struct multiboot2_mmap_entry) ||
+                entries_size < candidate->entry_size ||
+                entries_size % candidate->entry_size != 0)
+                return 0;
+            memory_map = candidate;
+            memory_map_size = tag->size;
+        }
+        uintptr_t next = ALIGN_UP(cursor + tag->size, 8);
+        if (next <= cursor || next > end) return 0;
+        cursor = next;
     }
     return 0;
 }

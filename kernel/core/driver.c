@@ -6,7 +6,6 @@
 static const struct driver *drivers[MAX_DRIVERS];
 static size_t registered_count;
 
-/* Registration stores static descriptors. Callers retain descriptor ownership. */
 int driver_register(const struct driver *driver) {
     if (!driver || !driver->name || registered_count == MAX_DRIVERS) return -1;
     for (size_t i = 0; i < registered_count; ++i)

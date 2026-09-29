@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Fixed-capacity byte queue used by IRQ producers and deferred consumers. */
+/* Callers must serialize push/pop when an IRQ can access the queue. */
 struct byte_ring {
     uint8_t *data;
     size_t capacity;

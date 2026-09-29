@@ -12,6 +12,7 @@ static void timer_irq(struct interrupt_frame *frame) {
 
 void pit_init(uint32_t frequency_hz) {
     if (!frequency_hz) frequency_hz = 100;
+    if (frequency_hz > PIT_INPUT_HZ) frequency_hz = PIT_INPUT_HZ;
     uint32_t divisor = PIT_INPUT_HZ / frequency_hz;
     if (divisor > 65535) divisor = 65535;
     irq_register(0, timer_irq);
@@ -24,6 +25,6 @@ void pit_init(uint32_t frequency_hz) {
 uint64_t timer_ticks(void) { return ticks; }
 
 void timer_sleep(uint64_t duration) {
-    uint64_t deadline = ticks + duration;
-    while (ticks < deadline) __asm__ volatile("sti; hlt" ::: "memory");
+    uint64_t start = ticks;
+    while (ticks - start < duration) __asm__ volatile("sti; hlt" ::: "memory");
 }

@@ -44,19 +44,19 @@ esac
 
 "$vbox" createvm --name "$vm_name" --ostype Other_64 --register
 if [ "$boot" = "disk" ]; then
-    boot_sequence='--boot1 disk --boot2 dvd'
+    boot1=disk
+    boot2=dvd
 else
-    boot_sequence='--boot1 dvd --boot2 disk'
+    boot1=dvd
+    boot2=disk
 fi
-# The two boot-order values above are fixed strings for VBoxManage.
-set -- $boot_sequence
 if [ "$firmware" = "uefi" ]; then
     firmware_option=efi
 else
     firmware_option=bios
 fi
 "$vbox" modifyvm "$vm_name" --memory 256 --vram 16 --firmware "$firmware_option" \
-    "$@" --chipset ich9
+    --boot1 "$boot1" --boot2 "$boot2" --chipset ich9
 "$vbox" storagectl "$vm_name" --name IDE --add ide --controller PIIX4
 "$vbox" storageattach "$vm_name" --storagectl IDE --port 1 --device 0 \
     --type dvddrive --medium "$iso"

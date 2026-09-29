@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-/* These cases pin down the queue semantics used by interrupt-driven drivers. */
+/* These tests define the queue behavior expected by interrupt-driven drivers. */
 int main(void) {
     uint8_t storage[3], value = 0;
     struct byte_ring ring;

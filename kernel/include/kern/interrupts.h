@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 
+/* Keep this field order in sync with the common interrupt stub's stack frame. */
 struct interrupt_frame {
     uint64_t r15, r14, r13, r12, r11, r10, r9, r8;
     uint64_t rbp, rdi, rsi, rdx, rcx, rbx, rax;
@@ -11,6 +12,7 @@ struct interrupt_frame {
 
 typedef void (*irq_handler_t)(struct interrupt_frame *frame);
 void interrupts_init(void);
+/* Handlers run in interrupt context; keep them bounded and non-blocking. */
 void irq_register(uint8_t irq, irq_handler_t handler);
 void pic_unmask(uint8_t irq);
 void interrupt_dispatch(struct interrupt_frame *frame);

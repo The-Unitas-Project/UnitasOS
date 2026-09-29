@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <kern/string.h>
 #include <kern/vfs.h>
+#include <limits.h>
 #include <stdio.h>
 
 struct test_volume {
@@ -26,11 +27,23 @@ static int test_read(void *node, uint64_t offset, void *buffer, size_t length) {
     return (int)length;
 }
 
+static int bad_readdir(const char *path, void *data, uint64_t index,
+                       struct vfs_dirent *entry) {
+    (void)path;
+    (void)data;
+    (void)index;
+    memset(entry->name, 'A', sizeof(entry->name));
+    return 1;
+}
+
 int main(void) {
     struct test_volume root = { "/notes", "root-data", 9 };
     struct test_volume device = { "/console", "tty", 3 };
     const struct filesystem filesystem = {
         .name = "testfs", .open = test_open, .read = test_read
+    };
+    const struct filesystem malformed_filesystem = {
+        .name = "malformed-readdir", .readdir = bad_readdir
     };
     int root_handle, device_handle;
     char buffer[16] = {0};
@@ -40,6 +53,16 @@ int main(void) {
     assert(vfs_mount("/", &filesystem, &root) == 0);
     assert(vfs_mount("/dev", &filesystem, &device) == 0);
     assert(vfs_mount("/dev", &filesystem, &device) < 0);
+    assert(vfs_register(&malformed_filesystem) == 0);
+    assert(vfs_mount("/bad", &malformed_filesystem, 0) == 0);
+    assert(vfs_mount("/tmp/", &filesystem, &device) < 0);
+    assert(vfs_unlink("relative") < 0);
+    assert(vfs_readdir("relative", 0, &(struct vfs_dirent){0}) < 0);
+    assert(vfs_open("/notes", 0x80000000u, &root_handle) < 0);
+    struct vfs_dirent malformed_entry;
+    memset(&malformed_entry, 0x5a, sizeof(malformed_entry));
+    assert(vfs_readdir("/bad", 0, &malformed_entry) < 0);
+    assert((unsigned char)malformed_entry.name[0] == 0x5a);
 
     /* Longest-prefix routing must select /dev instead of the root mount. */
     assert(vfs_open("/dev/console", 0, &device_handle) == 0);
@@ -50,6 +73,7 @@ int main(void) {
     assert(vfs_open("/notes", 0, &root_handle) == 0);
     assert(vfs_read(root_handle, buffer, 4) == 4);
     assert(memcmp(buffer, "root", 4) == 0);
+    assert(vfs_read(root_handle, buffer, (size_t)INT_MAX + 1u) < 0);
     assert(vfs_read(root_handle, buffer, sizeof(buffer)) == 5);
     assert(memcmp(buffer, "-data", 5) == 0);
     assert(vfs_close(root_handle) == 0);

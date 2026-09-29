@@ -43,6 +43,7 @@ struct ahci_port {
     struct ahci_dma_area *dma;
     uint64_t sectors;
     bool lba48;
+    bool online;
     struct block_device block;
 };
 
@@ -103,6 +104,7 @@ static void start_port(volatile uint8_t *registers) {
 
 static int submit_command(struct ahci_port *port, const uint8_t fis[20],
                           bool write, size_t byte_count) {
+    if (!port->online) return -1;
     struct ahci_command_header *headers = (void *)port->dma->command_list;
     struct ahci_command_table *table = (void *)port->dma->command_table;
     memset(&headers[0], 0, sizeof(headers[0]));
@@ -121,9 +123,13 @@ static int submit_command(struct ahci_port *port, const uint8_t fis[20],
     mmio_write(port->registers, AHCI_PX_CI, 1);
     for (uint32_t spin = 0; spin < 10000000; ++spin) {
         uint32_t task = mmio_read(port->registers, AHCI_PX_TFD);
-        if (task & (ATA_STATUS_ERR | ATA_STATUS_DF)) return -1;
+        if (task & (ATA_STATUS_ERR | ATA_STATUS_DF)) {
+            port->online = false;
+            return -1;
+        }
         if (!(mmio_read(port->registers, AHCI_PX_CI) & 1)) return 0;
     }
+    port->online = false;
     return -1;
 }
 
@@ -146,8 +152,10 @@ static void make_fis(uint8_t fis[20], uint8_t command, uint64_t lba,
 
 static int transfer_one(struct ahci_port *port, uint64_t lba,
                         void *buffer, bool write) {
+    if (!port->online) return -1;
     if (lba >= port->sectors) return -1;
     if (!port->lba48 && lba >= (1ULL << 28)) return -1;
+    if (port->lba48 && lba >= (1ULL << 48)) return -1;
     if (write) memcpy(port->dma->data, buffer, BLOCK_SECTOR_SIZE);
     uint8_t fis[20];
     make_fis(fis, port->lba48 ? (write ? 0x35 : 0x25) : (write ? 0xca : 0xc8), lba, 1);
@@ -199,13 +207,17 @@ static bool identify_port(struct ahci_port *port) {
     mmio_write(port->registers, AHCI_PX_SERR, 0xffffffff);
     mmio_write(port->registers, AHCI_PX_IS, 0xffffffff);
     start_port(port->registers);
+    port->online = true;
 
     uint8_t command_fis[20];
     uint16_t identify[256];
     make_fis(command_fis, 0xec, 0, 0);
     if (submit_command(port, command_fis, false, sizeof(identify)) != 0) return false;
     memcpy(identify, port->dma->data, sizeof(identify));
-    if (!(identify[49] & (1u << 9))) return false;
+    if (!(identify[49] & (1u << 9))) {
+        port->online = false;
+        return false;
+    }
     port->lba48 = (identify[83] & 0xc400) == 0x4400;
     if (port->lba48) {
         port->sectors = (uint64_t)identify[100] |
@@ -215,7 +227,12 @@ static bool identify_port(struct ahci_port *port) {
     } else {
         port->sectors = (uint32_t)identify[60] | ((uint32_t)identify[61] << 16);
     }
-    return port->sectors != 0;
+    uint64_t max_sectors = port->lba48 ? (1ULL << 48) : (1ULL << 28);
+    if (!port->sectors || port->sectors > max_sectors) {
+        port->online = false;
+        return false;
+    }
+    return true;
 }
 
 struct ahci_scan { unsigned found; };

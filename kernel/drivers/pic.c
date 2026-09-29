@@ -19,6 +19,7 @@ void pic_init(void) {
 }
 
 void pic_unmask(uint8_t irq) {
+    if (irq >= 16) return;
     uint16_t port = irq < 8 ? PIC1_DATA : PIC2_DATA;
     uint8_t line = irq < 8 ? irq : (uint8_t)(irq - 8);
     outb(port, (uint8_t)(inb(port) & ~(1u << line)));
@@ -26,6 +27,7 @@ void pic_unmask(uint8_t irq) {
 }
 
 void pic_eoi(uint8_t irq) {
+    if (irq >= 16) return;
     if (irq >= 8) outb(PIC2_COMMAND, 0x20);
     outb(PIC1_COMMAND, 0x20);
 }

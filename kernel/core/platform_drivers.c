@@ -4,7 +4,7 @@
 #include <kern/timer.h>
 #include <kern/storage.h>
 
-/* Keep early platform device activation in one place and in dependency order. */
+/* Initialize platform devices here, in dependency order. */
 static int init_timer(void) { pit_init(100); return 0; }
 static int init_keyboard(void) { keyboard_init(); return 0; }
 

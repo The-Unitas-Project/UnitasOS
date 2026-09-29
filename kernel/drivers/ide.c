@@ -58,6 +58,7 @@ static int identify_drive(struct ide_drive *drive, uint16_t identify[256]) {
 static int transfer_sector(struct ide_drive *drive, uint64_t lba,
                            void *buffer, bool write) {
     if (lba >= drive->sectors) return -1;
+    if (drive->lba48 && lba >= (1ULL << 48)) return -1;
     select_drive(drive);
     if (wait_status(drive, false) != 0) return -1;
     if (drive->lba48) {
@@ -81,12 +82,19 @@ static int transfer_sector(struct ide_drive *drive, uint64_t lba,
         outb(drive->io_base + 7, write ? 0x30 : 0x20);
     }
     if (wait_status(drive, true) != 0) return -1;
-    uint16_t *words = buffer;
+    uint8_t *bytes = buffer;
     if (write) {
-        for (unsigned i = 0; i < BLOCK_SECTOR_SIZE / 2; ++i) outw(drive->io_base, words[i]);
+        for (unsigned i = 0; i < BLOCK_SECTOR_SIZE / 2; ++i) {
+            uint16_t word;
+            memcpy(&word, bytes + i * 2, sizeof(word));
+            outw(drive->io_base, word);
+        }
         if (wait_status(drive, false) != 0) return -1;
     } else {
-        for (unsigned i = 0; i < BLOCK_SECTOR_SIZE / 2; ++i) words[i] = inw(drive->io_base);
+        for (unsigned i = 0; i < BLOCK_SECTOR_SIZE / 2; ++i) {
+            uint16_t word = inw(drive->io_base);
+            memcpy(bytes + i * 2, &word, sizeof(word));
+        }
     }
     return 0;
 }
@@ -145,7 +153,8 @@ int ide_init(void) {
                 drive->sectors = (uint32_t)identify[60] |
                     ((uint32_t)identify[61] << 16);
             }
-            if (!drive->sectors) continue;
+            uint64_t max_sectors = drive->lba48 ? (1ULL << 48) : (1ULL << 28);
+            if (!drive->sectors || drive->sectors > max_sectors) continue;
             set_name(drive->block.name, found);
             drive->block.sector_count = drive->sectors;
             drive->block.private_data = drive;

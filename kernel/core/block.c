@@ -6,8 +6,11 @@ static struct block_device *devices[BLOCK_MAX_DEVICES];
 static size_t device_count;
 
 int block_register(struct block_device *device) {
-    if (!device || !device->name[0] || !device->sector_count ||
-        !device->read || device_count == BLOCK_MAX_DEVICES) return -1;
+    if (!device || !device->sector_count || !device->read ||
+        device_count == BLOCK_MAX_DEVICES) return -1;
+    size_t name_length = 0;
+    while (name_length < BLOCK_NAME_MAX && device->name[name_length]) ++name_length;
+    if (!name_length || name_length == BLOCK_NAME_MAX) return -1;
     for (size_t i = 0; i < device_count; ++i)
         if (strcmp(devices[i]->name, device->name) == 0) return -1;
     devices[device_count++] = device;

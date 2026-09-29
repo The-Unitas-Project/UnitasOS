@@ -37,7 +37,7 @@ _start:
     movl %eax, %esi                  /* Preserve Multiboot2 magic */
     movl %ebx, %ebp                  /* Preserve information structure */
 
-    /* Four page directories cover the full 32-bit boot-info address range. */
+    /* Four page directories identity-map the full 4 GiB boot address space. */
     movl $boot_pdpt, %eax
     orl $0x3, %eax
     movl %eax, boot_pml4
@@ -60,6 +60,7 @@ _start:
     movl $0, boot_pdpt + 28
 
     movl $boot_pd0, %edi
+    /* The initial identity map is writable and executable across all 4 GiB. */
     movl $0x83, %eax                  /* Present, writable, 2 MiB page */
     movl $2048, %ecx
 1:
@@ -99,7 +100,7 @@ long_mode_entry:
     movq $boot_stack_top, %rsp
     andq $-16, %rsp
 
-    /* Enable the SSE state required by the x86_64 compiler ABI. */
+    /* Initialize floating-point state before entering C code. */
     movq %cr0, %rax
     andq $-13, %rax                   /* Clear EM and TS */
     orq $0x22, %rax                   /* Set MP and NE */

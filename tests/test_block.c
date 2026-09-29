@@ -38,6 +38,9 @@ int main(void) {
     assert(block_read(&disk, 4, 1, output) < 0);
     assert(block_write(&disk, 3, 2, input) < 0);
     assert(block_read(&disk, 0, 0, output) < 0);
+    struct block_device invalid = { .sector_count = 1, .read = mock_read };
+    memset(invalid.name, 'x', sizeof(invalid.name));
+    assert(block_register(&invalid) < 0);
     puts("block layer tests passed");
     return 0;
 }

@@ -5,9 +5,9 @@
 #define HEAP_REGION_PAGES 16
 #define HEAP_MAX_PHYS (1024ULL * 1024 * 1024)
 
-/* Blocks remain in address order so adjacent free blocks can be coalesced. */
+/* Merge blocks only when one block ends at the next block's header. */
 struct heap_block {
-    size_t size;                 /* Payload size. The header is stored separately. */
+    size_t size;                 /* Payload bytes, excluding this header. */
     bool free;
     struct heap_block *previous;
     struct heap_block *next;
@@ -15,9 +15,17 @@ struct heap_block {
 static struct heap_block *blocks;
 static const size_t header_size = ALIGN_UP(sizeof(struct heap_block), 16);
 
+static bool align_allocation_size(size_t size, size_t *aligned) {
+    if (size > SIZE_MAX - 15) return false;
+    *aligned = (size + 15) & ~(size_t)15;
+    return true;
+}
+
 static bool add_region(size_t requested) {
+    if (requested > SIZE_MAX - header_size - (PAGE_SIZE - 1)) return false;
     size_t pages = (requested + header_size + PAGE_SIZE - 1) / PAGE_SIZE;
     if (pages < HEAP_REGION_PAGES) pages = HEAP_REGION_PAGES;
+    if (pages > SIZE_MAX / PAGE_SIZE) return false;
     phys_addr_t physical = pmm_alloc_pages(pages, HEAP_MAX_PHYS);
     if (!physical) return false;
     struct heap_block *block = (void *)(uintptr_t)physical;
@@ -34,11 +42,11 @@ void heap_init(void) { (void)add_region(0); }
 
 void *kmalloc(size_t size) {
     if (!size) size = 1;
-    size = ALIGN_UP(size, 16);
+    if (!align_allocation_size(size, &size)) return 0;
     for (;;) {
         for (struct heap_block *block = blocks; block; block = block->next) {
             if (!block->free || block->size < size) continue;
-            if (block->size >= size + header_size + 16) {
+            if (block->size - size >= header_size + 16) {
                 struct heap_block *split = (void *)((uintptr_t)block + header_size + size);
                 split->size = block->size - size - header_size;
                 split->free = true;

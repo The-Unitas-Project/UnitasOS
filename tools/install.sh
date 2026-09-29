@@ -49,7 +49,7 @@ if lsblk -nrpo MOUNTPOINT "$device" | grep -q '[^[:space:]]'; then
 fi
 
 if [ ! -f build/kernel.elf ] || [ ! -f boot/grub.cfg ]; then
-    printf '%s\n' "Build the kernel first with make iso."
+    printf '%s\n' "Build the kernel first with make."
     exit 1
 fi
 
