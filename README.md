@@ -1,45 +1,86 @@
 # UnitasOS
 
-UnitasOS is an experimental x86_64 operating-system foundation. The current kernel boots through the Multiboot2 protocol and provides a starting point for architecture code, memory management, interrupts, device drivers, and future OS services.
+UnitasOS is an experimental x86_64 kernel. It boots with the Multiboot2 protocol. It has memory, interrupt, driver, and file system code.
 
 ## Build and boot
 
-Requirements for `make`: Make, `x86_64-elf-gcc`, and `x86_64-elf-ld`. Building an ISO with `make iso` also requires GRUB's `grub-mkrescue` and `xorriso`. Running the ISO with `make run` requires QEMU.
+Install these tools to build the kernel:
 
-On macOS with MacPorts, install the cross compiler and binutils with `sudo port install x86_64-elf-gcc x86_64-elf-binutils`. Building the ISO on macOS requires a Docker container for `grub-mkrescue` or an equivalent environment.
+- `make`
+- `x86_64-elf-gcc`
+- `x86_64-elf-ld`
 
-Set `CROSS_COMPILE` if your toolchain uses a different executable prefix. The kernel ELF can be built without GRUB or QEMU.
+Install `grub-mkrescue` and `xorriso` to build an ISO. Install QEMU to boot the ISO with `make run`.
 
-### To build
-
-```sh
-make                 # build build/kernel.elf
-make iso             # build build/unitasos.iso
-make test            # run host-side kernel unit tests
-```
-
-### To run on QEMU
+On macOS, install the cross compiler and binutils with MacPorts:
 
 ```sh
-make run                   # boot with QEMU and a serial shell
-QEMU_DISPLAY=gtk make run  # show the QEMU VGA console when GTK is available
+sudo port install x86_64-elf-gcc x86_64-elf-binutils
 ```
 
-### To run on VirtualBox
+Use Docker or a Linux environment to run `grub-mkrescue` on macOS. Set `CROSS_COMPILE` if your tool names use a different prefix. You can build the kernel ELF without GRUB or QEMU.
+
+### Build commands
 
 ```sh
-make run-vbox STORAGE=ahci DISK=build/unitasos.vdi BOOT=disk VM_NAME=UnitasAHCI # Run with AHCI driver
-make run-vbox STORAGE=nvme DISK=build/unitasos.vdi BOOT=disk FIRMWARE=uefi VM_NAME=UnitasNVMe # Run with NVMe driver
+make                 # Build build/kernel.elf.
+make iso             # Build build/unitasos.iso.
+make serial=1        # Build with serial input and output.
+make serial=1 iso    # Build a serial ISO in build-serial/.
+make test            # Run host-side unit tests.
 ```
 
-GRUB loads the ELF kernel using the Multiboot2 protocol. `boot/boot.S` begins in 32-bit protected mode, installs bootstrap page tables, enables long mode, and passes the Multiboot information pointer to the C entry point. The first 4 GiB are identity mapped with 2 MiB pages so early kernel code and boot data are reachable before a full virtual-memory manager exists.
+Serial input and output are off by default. Add `serial=1` to each build or run command to turn them on.
 
-## Disk installation
+### Run with QEMU
 
-The installers run on a Linux host or a separate Linux live environment. They use GRUB for BIOS and UEFI boot, then copy the kernel and GRUB configuration to a FAT32 system partition. Set `DEVICE` to a whole disk such as `/dev/sda` or `/dev/nvme0n1` to install to hardware. Use `make install-image` to create a bootable raw disk image or `make install-vdi` to create a VirtualBox disk image. Each image operation requires root access for loop devices and asks you to type the output path before writing. `MODE` can be `uefi`, `bios`, or `both`. The partition editor opens `cfdisk` after a confirmation. Host installation needs util-linux, dosfstools, and GRUB tools for each selected firmware mode.
+```sh
+make run
+make serial=1 run
+make serial=1 run USB=1
+QEMU_DISPLAY=none make serial=1 run
+FIRMWARE=uefi make run
+```
 
-The live kernel detects IDE, SATA AHCI, and NVMe disks through the block-device layer. The install tools still run on Linux because GRUB installation and disk partitioning are not implemented in the kernel shell. IDE uses legacy PIO. AHCI and NVMe use polling and DMA buffers below 4 GiB. The initial drivers support 512-byte logical sectors. The installed kernel still uses a RAM filesystem, so files do not persist across reboots. The hardware installer and partition editor modify real disks.
+The first command uses the QEMU display. The second command sends the serial console to the terminal. The third command adds an xHCI controller and USB keyboard. The fourth command uses the serial console only. The fifth command boots the ISO with UEFI firmware.
 
-## Contributing
+The kernel can find the xHCI controller. It cannot read USB keyboard reports yet. Use `USB=1` to check controller discovery.
 
-Keep hardware-specific operations behind driver or architecture interfaces, and keep public declarations in `kernel/include/kern/`. New code should explain why it exists, ownership/lifetime rules, and hardware assumptions. Add a host test where practical. Hardware-dependent paths should document a manual QEMU or device test procedure.
+QEMU uses OVMF for UEFI boot. Set `QEMU_UEFI_FIRMWARE` if OVMF is outside the usual Linux paths. For example, set it to `/path/to/OVMF_CODE.fd`.
+
+### Run with VirtualBox
+
+```sh
+make run-vbox STORAGE=ahci DISK=build/unitasos.vdi BOOT=disk VM_NAME=UnitasAHCI
+make run-vbox STORAGE=nvme DISK=build/unitasos.vdi BOOT=disk FIRMWARE=uefi VM_NAME=UnitasNVMe
+```
+
+GRUB loads the ELF kernel with Multiboot2. `boot/boot.S` starts in 32-bit protected mode. It sets up page tables, enables 64-bit mode, and calls `kernel_main`. The page tables map the first 4 GiB to the same physical addresses. They use 2 MiB pages.
+
+## Install to a disk
+
+The install tools run on Linux. They use GRUB and a FAT32 system partition. They erase the selected disk. Check the device name before you confirm the install.
+
+Set `DEVICE` to a whole disk, such as `/dev/sda` or `/dev/nvme0n1`. Set `MODE` to `uefi`, `bios`, or `both`. Run `make install` to install to a disk.
+
+Run `make install-image` to create a raw disk image. Run `make install-vdi` to create a VirtualBox disk image. These commands need root access to set up loop devices. Each command asks you to confirm the output path.
+
+The install tools need util-linux, dosfstools, and GRUB tools for each selected boot mode. The partition editor uses `cfdisk` after you confirm the target disk.
+
+The install scripts create a GPT partition table. They support BIOS boot, UEFI boot, or both. GRUB starts the kernel with Multiboot2 in either mode. The kernel does not use UEFI services after GRUB starts it.
+
+The kernel can find IDE, SATA AHCI, and NVMe disks. The block layer uses polling for disk commands. AHCI and NVMe use DMA buffers below 4 GiB. The disk drivers need 512-byte logical sectors.
+
+The kernel scans GPT and MBR primary and logical partitions. It adds each partition to the block layer. The `/dev` file system lists whole disks and partitions as byte devices. Use `vfs_seek` to select a byte offset, then read or write disk data, including MBR and GPT sectors. Raw writes can change disk data.
+
+The `/dev` file system also provides `/dev/console`, `/dev/kbd`, `/dev/null`, and `/dev/zero`. Serial builds also provide `/dev/serial0`. USB storage devices will appear after a USB storage driver registers them with the block layer. The kernel does not have a framebuffer device yet.
+
+The install tools run on Linux because the kernel shell cannot install GRUB or edit partitions. The kernel formats a RAM FAT32 file system at each boot. Files in this file system do not persist after a reboot.
+
+## Contribute
+
+Keep hardware access in drivers or architecture code. Put public declarations in `kernel/include/kern/`. In code comments, explain contracts, ownership, limits, and hardware requirements. Add host tests for reusable code when useful. Document a QEMU or device test for hardware code.
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for kernel rules. Read [ROADMAP.md](ROADMAP.md) for planned work on input, disk storage, file paths, user mode, network access, and graphics.
+
+Read [SECURITY.md](SECURITY.md) for current device access and kernel security limits.

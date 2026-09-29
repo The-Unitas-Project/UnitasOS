@@ -6,39 +6,90 @@
 #define KEY_QUEUE_CAPACITY 128
 static uint8_t queue_storage[KEY_QUEUE_CAPACITY];
 static struct byte_ring queue;
+static bool left_shift_pressed;
+static bool right_shift_pressed;
+static bool caps_lock_pressed;
+static bool caps_lock_enabled;
 static const char keymap[128] = {
+    [0x01]='\x1b',
     [0x02]='1',[0x03]='2',[0x04]='3',[0x05]='4',[0x06]='5',
-    [0x07]='6',[0x08]='7',[0x09]='8',[0x0a]='9',[0x0b]='0',
+    [0x07]='6',[0x08]='7',[0x09]='8',[0x0a]='9',[0x0b]='0',[0x0c]='-',[0x0d]='=',
     [0x0e]='\b',[0x0f]='\t',[0x10]='q',[0x11]='w',[0x12]='e',
     [0x13]='r',[0x14]='t',[0x15]='y',[0x16]='u',[0x17]='i',
-    [0x18]='o',[0x19]='p',[0x1c]='\n',[0x1e]='a',[0x1f]='s',
+    [0x18]='o',[0x19]='p',[0x1a]='[',[0x1b]=']',[0x1c]='\n',[0x1e]='a',[0x1f]='s',
     [0x20]='d',[0x21]='f',[0x22]='g',[0x23]='h',[0x24]='j',
-    [0x25]='k',[0x26]='l',[0x2c]='z',[0x2d]='x',[0x2e]='c',
-    [0x2f]='v',[0x30]='b',[0x31]='n',[0x32]='m',[0x39]=' '
+    [0x25]='k',[0x26]='l',[0x27]=';',[0x28]='\'',[0x29]='`',[0x2b]='\\',
+    [0x2c]='z',[0x2d]='x',[0x2e]='c',[0x2f]='v',[0x30]='b',[0x31]='n',
+    [0x32]='m',[0x33]=',',[0x34]='.',[0x35]='/',[0x39]=' '
 };
+static const char shifted_keymap[128] = {
+    [0x02]='!',[0x03]='@',[0x04]='#',[0x05]='$',[0x06]='%',
+    [0x07]='^',[0x08]='&',[0x09]='*',[0x0a]='(',[0x0b]=')',
+    [0x0c]='_',[0x0d]='+',[0x1a]='{',[0x1b]='}',[0x27]=':',
+    [0x28]='"',[0x29]='~',[0x2b]='|',[0x33]='<',[0x34]='>',[0x35]='?'
+};
+
+static uintptr_t irq_save(void) {
+    uintptr_t flags;
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) : : "memory");
+    return flags;
+}
+
+static void irq_restore(uintptr_t flags) {
+    if (flags & (1u << 9)) __asm__ volatile("sti" : : : "memory");
+}
+
+bool keyboard_queue_char(char character) {
+    uintptr_t flags = irq_save();
+    bool queued = byte_ring_push(&queue, (uint8_t)character);
+    irq_restore(flags);
+    return queued;
+}
 
 static void keyboard_irq(struct interrupt_frame *frame) {
     (void)frame;
     uint8_t code = inb(0x60);
-    /* Ignore break codes and unmapped keys; extended sequences are not decoded. */
-    if (!(code & 0x80) && code < sizeof(keymap) && keymap[code])
-        (void)byte_ring_push(&queue, (uint8_t)keymap[code]);
+    if (code == 0x2a) { left_shift_pressed = true; return; }
+    if (code == 0xaa) { left_shift_pressed = false; return; }
+    if (code == 0x36) { right_shift_pressed = true; return; }
+    if (code == 0xb6) { right_shift_pressed = false; return; }
+    if (code == 0x3a) {
+        if (!caps_lock_pressed) caps_lock_enabled = !caps_lock_enabled;
+        caps_lock_pressed = true;
+        return;
+    }
+    if (code == 0xba) { caps_lock_pressed = false; return; }
+    if ((code & 0x80) || code >= sizeof(keymap)) return;
+
+    char character = keymap[code];
+    if (!character) return;
+    bool shift_pressed = left_shift_pressed || right_shift_pressed;
+    if (character >= 'a' && character <= 'z') {
+        if (shift_pressed != caps_lock_enabled)
+            character = (char)(character - 'a' + 'A');
+    } else if (shift_pressed && shifted_keymap[code]) {
+        character = shifted_keymap[code];
+    }
+    (void)keyboard_queue_char(character);
 }
 
 void keyboard_init(void) {
     byte_ring_init(&queue, queue_storage, sizeof(queue_storage));
+    left_shift_pressed = false;
+    right_shift_pressed = false;
+    caps_lock_pressed = false;
+    caps_lock_enabled = false;
     irq_register(1, keyboard_irq);
     pic_unmask(1);
 }
 
 bool keyboard_read_char(char *out) {
     if (!out) return false;
-    /* The IRQ producer must not update the queue while the main loop pops. */
-    uintptr_t flags;
-    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) : : "memory");
+    /* Disable interrupts while the main loop removes a byte from the IRQ queue. */
+    uintptr_t flags = irq_save();
     uint8_t value;
     bool available = byte_ring_pop(&queue, &value);
     if (available) *out = (char)value;
-    if (flags & (1u << 9)) __asm__ volatile("sti" : : : "memory");
+    irq_restore(flags);
     return available;
 }

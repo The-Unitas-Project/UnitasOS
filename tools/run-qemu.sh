@@ -7,8 +7,9 @@ disk=$3
 disk_format=$4
 boot=$5
 firmware=$6
+usb=${7:-0}
 qemu=${QEMU:-qemu-system-x86_64}
-display=${QEMU_DISPLAY:-none}
+display=${QEMU_DISPLAY:-default}
 
 if [ ! -f "$iso" ]; then
     printf 'ISO image not found: %s\n' "$iso" >&2
@@ -29,13 +30,30 @@ else
 fi
 set -- "$qemu" -m 256M -cdrom "$iso" -display "$display" -serial stdio -no-reboot -no-shutdown \
     -boot "order=$boot_order"
+case "$usb" in
+    0) ;;
+    1)
+        set -- "$@" -device qemu-xhci,id=unitas-xhci
+        set -- "$@" -device usb-kbd,bus=unitas-xhci.0
+        ;;
+    *)
+        printf 'Unknown USB selection: %s\n' "$usb" >&2
+        exit 2
+        ;;
+esac
 if [ "$firmware" = "uefi" ]; then
-    firmware_image=
-    for candidate in /usr/share/OVMF/OVMF_CODE.fd \
-                     /usr/share/edk2/x64/OVMF_CODE.fd \
-                     /usr/share/edk2-ovmf/x64/OVMF_CODE.fd; do
-        if [ -f "$candidate" ]; then firmware_image=$candidate; break; fi
-    done
+    firmware_image=${QEMU_UEFI_FIRMWARE:-}
+    if [ -n "$firmware_image" ] && [ ! -f "$firmware_image" ]; then
+        printf 'UEFI firmware file not found: %s\n' "$firmware_image" >&2
+        exit 1
+    fi
+    if [ -z "$firmware_image" ]; then
+        for candidate in /usr/share/OVMF/OVMF_CODE.fd \
+                         /usr/share/edk2/x64/OVMF_CODE.fd \
+                         /usr/share/edk2-ovmf/x64/OVMF_CODE.fd; do
+            if [ -f "$candidate" ]; then firmware_image=$candidate; break; fi
+        done
+    fi
     if [ -z "$firmware_image" ]; then
         printf '%s\n' "OVMF firmware was not found. Install an OVMF package or use FIRMWARE=bios." >&2
         exit 1

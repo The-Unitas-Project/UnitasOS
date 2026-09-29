@@ -11,6 +11,16 @@ int block_register(struct block_device *device) {
     size_t name_length = 0;
     while (name_length < BLOCK_NAME_MAX && device->name[name_length]) ++name_length;
     if (!name_length || name_length == BLOCK_NAME_MAX) return -1;
+    if ((name_length == 1 && device->name[0] == '.') ||
+        (name_length == 2 && device->name[0] == '.' && device->name[1] == '.'))
+        return -1;
+    for (size_t character = 0; character < name_length; ++character) {
+        char value = device->name[character];
+        if (!((value >= 'a' && value <= 'z') ||
+              (value >= 'A' && value <= 'Z') ||
+              (value >= '0' && value <= '9') || value == '_' || value == '-' ||
+              value == '.')) return -1;
+    }
     for (size_t i = 0; i < device_count; ++i)
         if (strcmp(devices[i]->name, device->name) == 0) return -1;
     devices[device_count++] = device;

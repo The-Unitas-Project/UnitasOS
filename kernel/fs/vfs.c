@@ -128,6 +128,13 @@ int vfs_write(int handle, const void *buffer, size_t length) {
     return result;
 }
 
+int vfs_seek(int handle, uint64_t offset) {
+    struct open_file *file = get_handle(handle);
+    if (!file) return -1;
+    file->offset = offset;
+    return 0;
+}
+
 int vfs_close(int handle) {
     struct open_file *file = get_handle(handle);
     if (!file) return -1;

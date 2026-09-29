@@ -4,6 +4,15 @@ CC = $(CROSS_COMPILE)gcc
 LD = $(CROSS_COMPILE)ld
 GRUB_MKRESCUE ?= grub-mkrescue
 QEMU ?= qemu-system-x86_64
+USB ?= 0
+SERIAL ?= 0
+serial ?= $(SERIAL)
+ifeq ($(filter $(serial),0 1),)
+$(error serial must be 0 or 1)
+endif
+ifeq ($(filter $(USB),0 1),)
+$(error USB must be 0 or 1)
+endif
 DEVICE ?=
 MODE ?= both
 DISK ?=
@@ -15,11 +24,15 @@ BOOT ?= live
 FIRMWARE ?= bios
 IMAGE ?= build/unitasos-installed.raw
 VDI ?= build/unitasos-installed.vdi
+ifeq ($(serial),1)
+BUILD := build-serial
+else
 BUILD := build
+endif
 KERNEL := $(BUILD)/kernel.elf
 ISO := $(BUILD)/unitasos.iso
 
-CPPFLAGS := -Ikernel/include
+CPPFLAGS := -Ikernel/include -DUNITAS_SERIAL=$(serial)
 CFLAGS := -std=gnu11 -ffreestanding -fno-stack-protector -fno-pic \
           -fno-pie -mno-red-zone -mgeneral-regs-only -mcmodel=small \
           -Wall -Wextra -Werror \
@@ -54,12 +67,12 @@ iso: $(KERNEL)
 	cp boot/grub.cfg $(BUILD)/iso/boot/grub/grub.cfg
 	cp tools/install.sh tools/install-image.sh tools/install-vdi.sh \
 	   tools/partition-editor.sh tools/run-qemu.sh tools/run-virtualbox.sh \
-	   README.md CONTRIBUTING.md $(BUILD)/iso/tools/
+	   README.md CONTRIBUTING.md ROADMAP.md $(BUILD)/iso/tools/
 	$(GRUB_MKRESCUE) -o $(ISO) $(BUILD)/iso
 
 run: $(ISO)
 	QEMU="$(QEMU)" ./tools/run-qemu.sh "$(ISO)" "$(STORAGE)" \
-	   "$(DISK)" "$(DISK_FORMAT)" "$(BOOT)" "$(FIRMWARE)"
+	   "$(DISK)" "$(DISK_FORMAT)" "$(BOOT)" "$(FIRMWARE)" "$(USB)"
 
 run-qemu: run
 
@@ -90,6 +103,6 @@ partition-edit:
 	./tools/partition-editor.sh "$(DEVICE)"
 
 clean:
-	rm -rf $(BUILD) tests/build
+	rm -rf build build-serial tests/build
 
 -include $(DEPFILES)

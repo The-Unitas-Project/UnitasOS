@@ -260,6 +260,22 @@ static void find_controller(const struct pci_device *device, void *context) {
     }
 }
 
+static void set_disk_name(char output[BLOCK_NAME_MAX], unsigned index) {
+    char reversed[BLOCK_NAME_MAX - 2];
+    size_t count = 0;
+    do {
+        unsigned digit = index % 26;
+        index /= 26;
+        if (index) --index;
+        reversed[count++] = (char)('a' + digit);
+    } while (index && count < sizeof(reversed));
+    output[0] = 's';
+    output[1] = 'd';
+    size_t position = 2;
+    while (count) output[position++] = reversed[--count];
+    output[position] = 0;
+}
+
 int ahci_init(void) {
     pci_enumerate(find_controller, 0);
     if (!hba) return 0;
@@ -269,20 +285,8 @@ int ahci_init(void) {
         struct ahci_port *port = &ports[i];
         port->registers = port_registers(i);
         if (!identify_port(port)) continue;
-        port->block.name[0] = 's'; port->block.name[1] = 'a';
-        port->block.name[2] = 't'; port->block.name[3] = 'a';
         unsigned number = registered_count;
-        unsigned digits = 4;
-        do {
-            port->block.name[digits++] = (char)('0' + number % 10);
-            number /= 10;
-        } while (number && digits < BLOCK_NAME_MAX - 1);
-        for (unsigned left = 4, right = digits - 1; left < right; ++left, --right) {
-            char temporary = port->block.name[left];
-            port->block.name[left] = port->block.name[right];
-            port->block.name[right] = temporary;
-        }
-        port->block.name[digits] = 0;
+        set_disk_name(port->block.name, number);
         port->block.sector_count = port->sectors;
         port->block.private_data = port;
         port->block.read = ahci_read;

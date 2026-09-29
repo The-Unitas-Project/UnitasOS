@@ -127,8 +127,10 @@ static int ide_flush(struct block_device *device) {
 }
 
 static void set_name(char output[BLOCK_NAME_MAX], unsigned index) {
-    output[0] = 'i'; output[1] = 'd'; output[2] = 'e'; output[3] = (char)('0' + index);
-    output[4] = 0;
+    output[0] = 'h';
+    output[1] = 'd';
+    output[2] = (char)('a' + index);
+    output[3] = 0;
 }
 
 int ide_init(void) {

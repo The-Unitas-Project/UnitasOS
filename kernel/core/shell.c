@@ -2,17 +2,27 @@
 #include <kern/block.h>
 #include <kern/keyboard.h>
 #include <kern/mm.h>
+#include <kern/panic.h>
 #include <kern/ramfs.h>
 #include <kern/shell.h>
 #include <kern/string.h>
 #include <kern/vfs.h>
+#include <limits.h>
 
 #define SHELL_LINE_CAPACITY 128
 static char line[SHELL_LINE_CAPACITY];
 static size_t line_length;
+static bool previous_character_was_cr;
+static int console_output = -1;
+
+static void write_output(const void *buffer, size_t length) {
+    if (console_output < 0 || length > INT_MAX ||
+        vfs_write(console_output, buffer, length) != (int)length)
+        panic("console output failed");
+}
 
 static void print(const char *text) {
-    console_write(text, strlen(text));
+    write_output(text, strlen(text));
 }
 
 static void print_u64(uint64_t value) {
@@ -22,13 +32,16 @@ static void print_u64(uint64_t value) {
         digits[count++] = (char)('0' + value % 10);
         value /= 10;
     } while (value);
-    while (count) console_putc(digits[--count]);
+    while (count) {
+        char character = digits[--count];
+        write_output(&character, 1);
+    }
 }
 
 static void print_hex_byte(uint8_t value) {
     static const char digits[] = "0123456789abcdef";
-    console_putc(digits[value >> 4]);
-    console_putc(digits[value & 0x0f]);
+    write_output(&digits[value >> 4], 1);
+    write_output(&digits[value & 0x0f], 1);
 }
 
 static void prompt(void) { print("unitas:/# "); }
@@ -49,7 +62,7 @@ static char *next_word(char **cursor) {
 }
 
 static void command_help(void) {
-    print("help  ls  cat FILE  touch FILE  write FILE TEXT  rm FILE\n");
+    print("help  ls  dev  cat FILE  touch FILE  write FILE TEXT  rm FILE\n");
     print("mem   clear  uname\n");
     print("disks  diskcheck\n");
     print("RAM files use FAT32 8.3 names and disappear when the machine reboots.\n");
@@ -65,6 +78,15 @@ static void command_list(void) {
     }
 }
 
+static void command_devices(void) {
+    struct vfs_dirent entry;
+    for (uint64_t index = 0; vfs_readdir("/dev", index, &entry) > 0; ++index) {
+        print("/dev/");
+        print(entry.name);
+        print("\n");
+    }
+}
+
 static void command_cat(const char *name) {
     char path[32] = "/";
     size_t name_length = strlen(name);
@@ -75,7 +97,7 @@ static void command_cat(const char *name) {
     char buffer[64];
     int amount;
     while ((amount = vfs_read(handle, buffer, sizeof(buffer))) > 0)
-        console_write(buffer, (size_t)amount);
+        write_output(buffer, (size_t)amount);
     print("\n");
     (void)vfs_close(handle);
 }
@@ -130,15 +152,27 @@ static void command_diskcheck(void) {
     uint8_t sector[BLOCK_SECTOR_SIZE];
     for (size_t i = 0; i < block_device_count(); ++i) {
         struct block_device *device = block_device_at(i);
+        char path[BLOCK_NAME_MAX + 6] = "/dev/";
+        size_t name_length = strlen(device->name);
+        memcpy(path + 5, device->name, name_length + 1);
+        int handle = -1;
         print(device->name);
-        if (block_read(device, 0, 1, sector) != 0) {
+        if (vfs_open(path, 0, &handle) < 0 ||
+            vfs_read(handle, sector, sizeof(sector)) != (int)sizeof(sector)) {
             print(" sector 0 read failed\n");
+            if (handle >= 0) (void)vfs_close(handle);
             continue;
         }
         print(" sector 0 read OK. MBR signature 0x");
         print_hex_byte(sector[511]);
         print_hex_byte(sector[510]);
+        if (device->sector_count >= 2 &&
+            vfs_seek(handle, BLOCK_SECTOR_SIZE) == 0 &&
+            vfs_read(handle, sector, sizeof(sector)) == (int)sizeof(sector) &&
+            memcmp(sector, "EFI PART", 8) == 0)
+            print(". GPT header found");
         print("\n");
+        (void)vfs_close(handle);
     }
 }
 
@@ -148,6 +182,7 @@ static void execute_line(char *input) {
     if (!command) return;
     if (strcmp(command, "help") == 0) command_help();
     else if (strcmp(command, "ls") == 0) command_list();
+    else if (strcmp(command, "dev") == 0) command_devices();
     else if (strcmp(command, "cat") == 0) {
         char *name = next_word(&cursor);
         if (name) command_cat(name); else print("usage: cat FILE\n");
@@ -179,6 +214,8 @@ static void execute_line(char *input) {
 
 void shell_init(void) {
     static const char greeting[] = "UnitasOS live shell\nType help to list commands.\n";
+    if (vfs_open("/dev/console", 0, &console_output) < 0)
+        panic("failed to open console output device");
     int handle;
     if (vfs_open("/WELCOME.TXT", VFS_OPEN_CREATE | VFS_OPEN_TRUNCATE, &handle) == 0) {
         (void)vfs_write(handle, greeting, sizeof(greeting) - 1);
@@ -188,22 +225,31 @@ void shell_init(void) {
 }
 
 void shell_process_char(char character) {
-    if (character == '\b') {
+    if (character == '\b' || character == '\x7f') {
         if (line_length) {
             --line_length;
-            console_putc('\b'); console_putc(' '); console_putc('\b');
+            static const char erase[] = "\b \b";
+            write_output(erase, sizeof(erase) - 1);
         }
+        previous_character_was_cr = false;
         return;
     }
+    if (character == '\n' && previous_character_was_cr) {
+        previous_character_was_cr = false;
+        return;
+    }
+    previous_character_was_cr = character == '\r';
     if (character == '\n' || character == '\r') {
-        console_putc('\n');
+        write_output("\n", 1);
         line[line_length] = 0;
         execute_line(line);
         line_length = 0;
         prompt();
         return;
     }
+    /* The parser treats Tab as a space. Show a space on the console. */
+    if (character == '\t') character = ' ';
     if (character < 0x20 || line_length + 1 >= sizeof(line)) return;
     line[line_length++] = character;
-    console_putc(character);
+    write_output(&character, 1);
 }

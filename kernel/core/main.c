@@ -3,7 +3,6 @@
 #include <kern/driver.h>
 #include <kern/interrupts.h>
 #include <kern/io.h>
-#include <kern/keyboard.h>
 #include <kern/log.h>
 #include <kern/mm.h>
 #include <kern/panic.h>
@@ -11,6 +10,7 @@
 #include <kern/serial.h>
 #include <kern/shell.h>
 #include <kern/timer.h>
+#include <kern/vfs.h>
 
 const struct multiboot2_mmap_tag *boot_memory_map(uintptr_t address,
                                                   size_t *tag_size) {
@@ -75,15 +75,22 @@ void kernel_main(uint32_t magic, uintptr_t boot_info_address) {
 
     interrupts_init();
     pic_init();
+    serial_interrupts_init();
     platform_drivers_init();
     cpu_enable_interrupts();
     log_write(LOG_INFO, "interrupts enabled. Timer at 100 Hz\n");
     shell_init();
 
+    int console_input;
+    if (vfs_open("/dev/console", 0, &console_input) < 0)
+        panic("failed to open console input device");
+
     for (;;) {
         char character;
-        while (keyboard_read_char(&character)) shell_process_char(character);
-        if (serial_read_char(&character)) shell_process_char(character);
+        int amount;
+        while ((amount = vfs_read(console_input, &character, 1)) > 0)
+            shell_process_char(character);
+        if (amount < 0) panic("console input read failed");
         __asm__ volatile("hlt");
     }
 }

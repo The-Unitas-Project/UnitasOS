@@ -1,7 +1,6 @@
 /*
- * CPU vectors share one register-save frame so the C dispatcher has a stable
- * ABI. Error-code exceptions already push an error code. Other vectors receive
- * a synthetic zero so the frame layout remains identical.
+ * Each CPU vector uses the same register frame. The C handler reads this frame.
+ * An exception with an error code pushes it. Other vectors push zero.
  */
 .section .text, "ax"
 .code64

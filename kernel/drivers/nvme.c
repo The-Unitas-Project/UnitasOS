@@ -301,10 +301,7 @@ static void find_nvme(const struct pci_device *device, void *context) {
         return;
     }
     controller.data_page = io_data_page;
-    controller.block.name[0] = 'n'; controller.block.name[1] = 'v';
-    controller.block.name[2] = 'm';
-    controller.block.name[3] = 'e'; controller.block.name[4] = '0';
-    controller.block.name[5] = 0;
+    memcpy(controller.block.name, "nvme0n1", sizeof("nvme0n1"));
     controller.block.sector_count = controller.sectors;
     controller.block.private_data = &controller;
     controller.block.read = nvme_read;
