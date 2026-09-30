@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 
+/* Serial input and /dev/serial0 require a build with serial=1. */
 void serial_init(void);
 void serial_interrupts_init(void);
 void serial_putc(char character);

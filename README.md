@@ -1,86 +1,71 @@
 # UnitasOS
 
-UnitasOS is an experimental x86_64 kernel. It boots with the Multiboot2 protocol. It has memory, interrupt, driver, and file system code.
+UnitasOS is an x86-64 operating system kernel. It boots through the Multiboot2 protocol. The kernel supports ring 3 programs, a virtual file system, RAM and read-only disk FAT32 roots, and IDE, AHCI, and NVMe block devices.
 
-## Build and boot
+## Build
 
-Install these tools to build the kernel:
+The kernel target is x86-64. On Linux x86-64, the build uses installed Clang and the system ELF linker. If Clang is not installed, it uses `cc`. On macOS, Clang emits x86-64 ELF files and the build uses the x86-64 ELF linker. The build does not fetch compiler or kernel source trees.
 
-- `make`
-- `x86_64-elf-gcc`
-- `x86_64-elf-ld`
-
-Install `grub-mkrescue` and `xorriso` to build an ISO. Install QEMU to boot the ISO with `make run`.
-
-On macOS, install the cross compiler and binutils with MacPorts:
+On macOS Ventura, install the Apple command line tools and the MacPorts cross linker:
 
 ```sh
-sudo port install x86_64-elf-gcc x86_64-elf-binutils
+xcode-select --install
+sudo port install x86_64-elf-binutils
 ```
 
-Use Docker or a Linux environment to run `grub-mkrescue` on macOS. Set `CROSS_COMPILE` if your tool names use a different prefix. You can build the kernel ELF without GRUB or QEMU.
+On Linux x86-64, install Clang or GCC and GNU binutils. The build uses the host tools by default. Set `CROSS_COMPILE` only when your x86-64 ELF linker uses a different name prefix.
 
-### Build commands
+Use these commands to build the kernel and user program:
 
 ```sh
-make                 # Build build/kernel.elf.
-make iso             # Build build/unitasos.iso.
-make serial=1        # Build with serial input and output.
-make serial=1 iso    # Build a serial ISO in build-serial/.
-make test            # Run host-side unit tests.
+make
+make serial=1
+make userland
 ```
 
-Serial input and output are off by default. Add `serial=1` to each build or run command to turn them on.
+Add `serial=1` to a build to enable serial input and output. The default build does not register `/dev/serial0`.
 
-### Run with QEMU
+Build the GNU userland and embed it in the kernel with this command:
 
 ```sh
+make gnu-system
+```
+
+This target builds static GNU libc, GNU Coreutils, and Bash for Linux x86-64. It stages Bash as both `/bin/bash` and `/bin/sh`. The target downloads pinned GNU packages. It does not download GCC or Linux source trees. A native Linux x86-64 build uses the host compiler and linker. It does not require `CROSS_COMPILE`.
+
+Install GRUB, xorriso, and QEMU to create and boot an ISO:
+
+```sh
+make iso
 make run
-make serial=1 run
-make serial=1 run USB=1
-QEMU_DISPLAY=none make serial=1 run
-FIRMWARE=uefi make run
 ```
 
-The first command uses the QEMU display. The second command sends the serial console to the terminal. The third command adds an xHCI controller and USB keyboard. The fourth command uses the serial console only. The fifth command boots the ISO with UEFI firmware.
+Use `FIRMWARE=uefi` to boot with UEFI firmware. Use `USB=1` to add a USB controller in QEMU.
 
-The kernel can find the xHCI controller. It cannot read USB keyboard reports yet. Use `USB=1` to check controller discovery.
+## Memory and system files
 
-QEMU uses OVMF for UEFI boot. Set `QEMU_UEFI_FIRMWARE` if OVMF is outside the usual Linux paths. For example, set it to `/path/to/OVMF_CODE.fd`.
+The bootstrap maps the first 4 GiB with 2 MiB pages. Before it starts the heap, the kernel replaces pages that contain the kernel image with 4 KiB mappings. Kernel text is read-only and executable. Read-only data is not executable. Kernel data and RAM are writable and not executable. All kernel pages stay outside user access. The CPU must support the NX page bit.
 
-### Run with VirtualBox
+The read-only `/proc` file system provides `/proc/meminfo`, `/proc/uptime`, `/proc/cpuinfo`, `/proc/mounts`, `/proc/partitions`, `/proc/self/status`, and `/proc/net/ipv4`. Each open file returns a snapshot. The partition file lists each block device name and its sector count. The network file reports link and DHCP state.
 
-```sh
-make run-vbox STORAGE=ahci DISK=build/unitasos.vdi BOOT=disk VM_NAME=UnitasAHCI
-make run-vbox STORAGE=nvme DISK=build/unitasos.vdi BOOT=disk FIRMWARE=uefi VM_NAME=UnitasNVMe
-```
+The kernel starts `/bin/bash` when the GNU userland is present. A kernel-only build starts the small `/bin/sh` bootstrap program. The bootstrap shell accepts quoted arguments and backslash escapes. The power commands use the Linux `reboot` system call. The kernel flushes block devices before a power change. Shutdown uses ACPI S5 and requires valid tables with an S5 state and legacy PM1 I/O registers. Reboot uses the FADT reset register when firmware marks it as supported, then tries the keyboard controller. Unitas does not have user IDs or power-control permissions yet.
 
-GRUB loads the ELF kernel with Multiboot2. `boot/boot.S` starts in 32-bit protected mode. It sets up page tables, enables 64-bit mode, and calls `kernel_main`. The page tables map the first 4 GiB to the same physical addresses. They use 2 MiB pages.
+QEMU starts an Intel 82540EM network device by default. The driver polls Ethernet frames and uses DHCP to request an IPv4 address, gateway, and DNS server. The current network code does not provide general UDP, ARP, TCP, sockets, or application network access.
 
-## Install to a disk
+Linux x86-64 syscall numbers use the names in `abi/asm/unistd_64.h` and `abi/linux/syscall.h`. Unitas-specific calls use interrupt vector `0x81` and the headers in `abi/unitas/`.
 
-The install tools run on Linux. They use GRUB and a FAT32 system partition. They erase the selected disk. Check the device name before you confirm the install.
+## Storage
 
-Set `DEVICE` to a whole disk, such as `/dev/sda` or `/dev/nvme0n1`. Set `MODE` to `uefi`, `bios`, or `both`. Run `make install` to install to a disk.
+The kernel scans MBR and GPT partition tables. It validates partition bounds and both GPT copies. It can use a valid backup GPT when the primary copy is damaged. It exposes registered disks and partitions under `/dev`.
 
-Run `make install-image` to create a raw disk image. Run `make install-vdi` to create a VirtualBox disk image. These commands need root access to set up loop devices. Each command asks you to confirm the output path.
+The installer runs on Linux. It needs util-linux, GRUB tools, and the formatter for the selected root file system. It creates a root partition with ext4 by default. Set `ROOT_FS=fat32` or `ROOT_FS=btrfs` to choose another format. UEFI layouts use a separate FAT32 EFI System Partition. GPT supports BIOS, UEFI, or both boot modes. MBR supports BIOS mode. The installer copies the kernel and built user programs to the root partition and installs GRUB.
 
-The install tools need util-linux, dosfstools, and GRUB tools for each selected boot mode. The partition editor uses `cfdisk` after you confirm the target disk.
+At startup, the kernel looks for a FAT32 volume labelled `UNITASOS` that contains the expected `/bin` programs, including `/bin/sh`. It mounts that root read-only. The disk driver supports short 8.3 names. If the root is ext4 or Btrfs, or if the FAT32 volume is missing, the kernel uses the RAM FAT32 root. The installer defaults to ext4, so set `ROOT_FS=fat32` to use the current disk-backed root driver. Ext4 and Btrfs runtime drivers are not available yet.
 
-The install scripts create a GPT partition table. They support BIOS boot, UEFI boot, or both. GRUB starts the kernel with Multiboot2 in either mode. The kernel does not use UEFI services after GRUB starts it.
-
-The kernel can find IDE, SATA AHCI, and NVMe disks. The block layer uses polling for disk commands. AHCI and NVMe use DMA buffers below 4 GiB. The disk drivers need 512-byte logical sectors.
-
-The kernel scans GPT and MBR primary and logical partitions. It adds each partition to the block layer. The `/dev` file system lists whole disks and partitions as byte devices. Use `vfs_seek` to select a byte offset, then read or write disk data, including MBR and GPT sectors. Raw writes can change disk data.
-
-The `/dev` file system also provides `/dev/console`, `/dev/kbd`, `/dev/null`, and `/dev/zero`. Serial builds also provide `/dev/serial0`. USB storage devices will appear after a USB storage driver registers them with the block layer. The kernel does not have a framebuffer device yet.
-
-The install tools run on Linux because the kernel shell cannot install GRUB or edit partitions. The kernel formats a RAM FAT32 file system at each boot. Files in this file system do not persist after a reboot.
+Create an ext4 raw image with `make install-image`. Choose another root format with `make install-image ROOT_FS=fat32` or `make install-image ROOT_FS=btrfs`. Create a VirtualBox image with `make install-vdi`. These commands need root access for loop devices. Review the target path before you confirm an install. The installer erases the target disk or image.
 
 ## Contribute
 
-Keep hardware access in drivers or architecture code. Put public declarations in `kernel/include/kern/`. In code comments, explain contracts, ownership, limits, and hardware requirements. Add host tests for reusable code when useful. Document a QEMU or device test for hardware code.
+Use ASD-STE100 for comments, documentation, and docstrings. Write for programmers who know C and basic systems concepts. State contracts, ownership, limits, and hardware requirements.
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for kernel rules. Read [ROADMAP.md](ROADMAP.md) for planned work on input, disk storage, file paths, user mode, network access, and graphics.
-
-Read [SECURITY.md](SECURITY.md) for current device access and kernel security limits.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for code and build rules. Read [ROADMAP.md](ROADMAP.md) for planned system work. Read [SECURITY.md](SECURITY.md) before you change memory, user access, or disk code.

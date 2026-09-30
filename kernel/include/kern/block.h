@@ -32,5 +32,6 @@ int block_read(struct block_device *device, uint64_t lba, uint32_t count,
 int block_write(struct block_device *device, uint64_t lba, uint32_t count,
                 const void *buffer);
 int block_flush(struct block_device *device);
+int block_flush_all(void);
 
 #endif

@@ -1,0 +1,24 @@
+#ifndef LINUX_ABI_H
+#define LINUX_ABI_H
+
+#define AT_FDCWD (-100)
+#define AT_SYMLINK_NOFOLLOW 0x100
+#define AT_EACCESS 0x200
+
+#define ARCH_SET_FS 0x1002
+#define ARCH_GET_FS 0x1003
+
+#define PROT_READ 0x1
+#define PROT_WRITE 0x2
+#define PROT_EXEC 0x4
+
+#define MAP_SHARED 0x01
+#define MAP_PRIVATE 0x02
+#define MAP_FIXED 0x10
+#define MAP_ANONYMOUS 0x20
+#define MAP_FIXED_NOREPLACE 0x100000
+
+#define S_IFMT 0170000
+#define S_IFDIR 0040000
+
+#endif

@@ -62,3 +62,11 @@ int block_flush(struct block_device *device) {
     if (!device || !device->flush) return -1;
     return device->flush(device);
 }
+
+int block_flush_all(void) {
+    for (size_t index = 0; index < device_count; ++index) {
+        struct block_device *device = devices[index];
+        if (device->write && block_flush(device) != 0) return -1;
+    }
+    return 0;
+}

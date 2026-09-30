@@ -5,13 +5,15 @@
 
 void pmm_init(const struct multiboot2_mmap_tag *map, size_t map_size,
               uintptr_t boot_info_address, size_t boot_info_size);
-/*
- * Allocate count contiguous pages. Do not use addresses at or above max_address.
- * Set max_address to 0 for no limit. Return the physical base or 0 on failure.
+/* Apply kernel page permissions. Return -1 if setup fails or NX is absent. */
+int paging_init(void);
+/* Allocate count contiguous frames below max_address. Return zero on failure.
+ * Set max_address to zero for no bound. Use a 4 GiB limit for identity access.
  */
 phys_addr_t pmm_alloc_pages(size_t count, phys_addr_t max_address);
-/* Frees pages returned by pmm_alloc_pages; reserved frames are rejected. */
+/* Free frames returned by pmm_alloc_pages. Ignore reserved or free frames. */
 void pmm_free_pages(phys_addr_t base, size_t count);
+/* Return usable frames. Include free and allocated frames. */
 size_t pmm_total_pages(void);
 size_t pmm_free_page_count(void);
 void heap_init(void);

@@ -12,10 +12,11 @@ struct interrupt_frame {
 
 typedef void (*irq_handler_t)(struct interrupt_frame *frame);
 void interrupts_init(void);
+void interrupts_register_user_call(void (*entry)(void));
 /* Handlers run in interrupt context; keep them bounded and non-blocking. */
 void irq_register(uint8_t irq, irq_handler_t handler);
 void pic_unmask(uint8_t irq);
-void interrupt_dispatch(struct interrupt_frame *frame);
+int interrupt_dispatch(struct interrupt_frame *frame);
 void pic_init(void);
 void pic_eoi(uint8_t irq);
 

@@ -12,6 +12,7 @@
 #define UNITAS_SERIAL 0
 #endif
 
+/* Block writes use one shared sector buffer to preserve partial sectors. */
 #define DEVFS_MAX_OPEN 64
 
 enum devfs_kind { DEV_CONSOLE, DEV_NULL, DEV_ZERO, DEV_KEYBOARD, DEV_SERIAL, DEV_BLOCK };
@@ -218,12 +219,65 @@ static int devfs_readdir(const char *path, void *data, uint64_t index,
     return 1;
 }
 
+static void devfs_fill_stat(enum devfs_kind kind,
+                            struct block_device *block,
+                            struct vfs_stat *result) {
+    memset(result, 0, sizeof(*result));
+    result->links = 1;
+    result->block_size = BLOCK_SECTOR_SIZE;
+    if (kind == DEV_BLOCK) {
+        result->mode = 0060000 | 0600;
+        result->size = block_capacity(block);
+        result->blocks = result->size / BLOCK_SECTOR_SIZE;
+        result->inode = (uintptr_t)block;
+    } else {
+        result->mode = 0020000 | 0666;
+        result->inode = (uint64_t)kind + 1;
+    }
+}
+
+static int devfs_stat_path(const char *path, void *data,
+                           struct vfs_stat *result) {
+    (void)data;
+    if (!path || !result || path[0] != '/') return -1;
+    if (strcmp(path, "/") == 0) {
+        memset(result, 0, sizeof(*result));
+        result->mode = 0040000 | 0755;
+        result->links = 2;
+        result->block_size = BLOCK_SECTOR_SIZE;
+        return 0;
+    }
+    enum devfs_kind kind;
+    struct block_device *block = 0;
+    if (strcmp(path, "/console") == 0) kind = DEV_CONSOLE;
+    else if (strcmp(path, "/null") == 0) kind = DEV_NULL;
+    else if (strcmp(path, "/zero") == 0) kind = DEV_ZERO;
+    else if (strcmp(path, "/kbd") == 0) kind = DEV_KEYBOARD;
+#if UNITAS_SERIAL
+    else if (strcmp(path, "/serial0") == 0) kind = DEV_SERIAL;
+#endif
+    else if (path[1] && !strchr(path + 1, '/') &&
+             (block = block_find(path + 1))) kind = DEV_BLOCK;
+    else return -1;
+    devfs_fill_stat(kind, block, result);
+    return 0;
+}
+
+static int devfs_stat_node(void *node, struct vfs_stat *result) {
+    struct devfs_open_file *file = node;
+    if (!file || !file->used || !result) return -1;
+    devfs_fill_stat(file->kind, file->block, result);
+    return 0;
+}
+
 static const struct filesystem devfs = {
     .name = "devfs",
     .open = devfs_open,
     .read = devfs_read,
     .write = devfs_write,
     .close = devfs_close,
+    .stat_path = devfs_stat_path,
+    .stat_node = devfs_stat_node,
     .readdir = devfs_readdir
 };
 

@@ -5,6 +5,7 @@
 .section .text, "ax"
 .code64
 .extern interrupt_dispatch
+.extern user_return_to_kernel
 .macro ISR_NOERR n
 .global isr\n
 isr\n:
@@ -95,6 +96,8 @@ isr_common:
     movq %rsp, %rbx
     andq $-16, %rsp
     call interrupt_dispatch
+    testl %eax, %eax
+    jnz user_return_to_kernel
     movq %rbx, %rsp
     popq %r15
     popq %r14

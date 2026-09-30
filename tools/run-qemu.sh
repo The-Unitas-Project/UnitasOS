@@ -29,7 +29,8 @@ else
     exit 2
 fi
 set -- "$qemu" -m 256M -cdrom "$iso" -display "$display" -serial stdio -no-reboot -no-shutdown \
-    -boot "order=$boot_order"
+    -boot "order=$boot_order" -netdev user,id=unitas-net \
+    -device e1000,netdev=unitas-net,mac=52:54:00:12:34:56
 case "$usb" in
     0) ;;
     1)

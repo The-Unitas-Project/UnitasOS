@@ -1,7 +1,8 @@
 /*
- * Multiboot2 enters in 32-bit protected mode. This tiny trampoline creates
- * identity mappings for the first 4 GiB, enables PAE + long mode, and transfers
- * the boot information pointer to kernel_main according to the SysV ABI.
+ * Multiboot2 enters in 32-bit protected mode.
+ * This code maps the first 4 GiB to the same physical addresses.
+ * It enables Physical Address Extension (PAE) and 64-bit mode.
+ * It passes the boot data to kernel_main with the System V AMD64 ABI.
  */
 .section .multiboot, "a"
 .align 8
@@ -19,9 +20,13 @@ mb2_header_end:
 .align 4096
 boot_pml4: .skip 4096
 boot_pdpt: .skip 4096
+.global boot_pd0
 boot_pd0:  .skip 4096
+.global boot_pd1
 boot_pd1:  .skip 4096
+.global boot_pd2
 boot_pd2:  .skip 4096
+.global boot_pd3
 boot_pd3:  .skip 4096
 .align 16
 boot_stack_bottom: .skip 16384
@@ -60,7 +65,7 @@ _start:
     movl $0, boot_pdpt + 28
 
     movl $boot_pd0, %edi
-    /* The initial identity map is writable and executable across all 4 GiB. */
+    /* The kernel replaces this map after it starts the physical page allocator. */
     movl $0x83, %eax                  /* Present, writable, 2 MiB page */
     movl $2048, %ecx
 1:
@@ -124,6 +129,12 @@ gdt64:
     .quad 0
     .quad 0x00af9a000000ffff            /* 64-bit code */
     .quad 0x00af92000000ffff            /* data */
+    .quad 0x00cff2000000ffff            /* User data */
+    .quad 0x00affa000000ffff            /* User code */
+.global gdt_tss_descriptor
+gdt_tss_descriptor:
+    .quad 0
+    .quad 0
 gdt64_end:
 gdt64_pointer:
     .word gdt64_end - gdt64 - 1

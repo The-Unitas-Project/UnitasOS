@@ -14,6 +14,9 @@ struct driver {
 int driver_register(const struct driver *driver);
 const struct driver *driver_find(const char *name);
 size_t driver_count(void);
+/* Register storage and partitions before the kernel selects its root volume. */
+void platform_storage_init(void);
+/* Register input, USB, network, and VFS device nodes after root mount. */
 void platform_drivers_init(void);
 
 #endif

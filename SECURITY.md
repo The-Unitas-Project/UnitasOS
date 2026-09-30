@@ -1,31 +1,31 @@
 # Security notes
 
-These notes describe the current kernel limits. Treat all disk data and device input as untrusted.
+Treat firmware data, disk data, and device input as untrusted. Check every size, address, and range before use.
 
-## Raw disk access
+## Memory
 
-The `/dev` file system exposes whole disks and partitions. A VFS handle can read or write any byte in a writable block device. A write can change a partition table or file data.
+The kernel requires CPU support for the NX page bit. It maps kernel text as read-only and executable. It maps kernel data as writable and non-executable. It keeps the identity map supervisor-only and enables supervisor write protection.
 
-The kernel does not have user mode or process access checks. Add read and write permissions before user programs can open device files.
+User programs run in ring 3. Their pages use user page-table flags. Syscall handlers check user ranges before they copy data between user and kernel memory.
 
-## Partition data
+Unitas does not have user IDs or capability checks. Any user program can call the Linux `reboot` system call to halt, reboot, or power off the machine. Do not run untrusted programs.
 
-The scanner checks GPT header and entry-array CRC values. It checks partition bounds and rejects overlapping partitions. It limits the MBR extended-partition chain to 128 entries and detects loops.
+## Storage
 
-The scanner reads the primary GPT only. It does not use a backup GPT when the primary copy is damaged. It supports up to 128 entries of 128 bytes each. Reject unsupported tables. Do not trust CRC values as proof that disk data is safe.
+The block layer checks each sector range before it calls a device driver. The partition scanner checks MBR and GPT ranges. It checks both GPT copies and their CRC values. It rejects overlapping partitions and valid GPT copies that disagree.
 
-## Device registry
+The FAT32 disk root reads metadata from an untrusted block device and mounts it read-only. It accepts a volume label and required program paths as root-selection checks. It does not verify program signatures or file checksums.
 
-The block registry accepts path-safe device names. The block and partition registries use fixed-size arrays. They do not support concurrent registration. Add locks before drivers register devices from multiple CPUs or tasks.
+A kernel block handle can write any byte in a writable disk or partition. A write can change a partition table or file data. User programs cannot open raw disk paths under `/dev`.
 
-## Input and boot
+The installer erases its target disk or image. It asks for the target path and the word `WIPE` before it writes.
 
-The USB code detects controller candidates. It does not start a USB controller or read USB reports. The kernel does not have a USB mass-storage or framebuffer driver. Do not treat these devices as supported.
+## Device state
 
-GRUB can start the kernel through Multiboot2 with BIOS or UEFI firmware. The kernel does not use UEFI services after the handoff.
+The block registry and partition registry use fixed-size tables. Register devices before the kernel starts user code. Do not register devices from concurrent tasks.
 
-The host installer can erase the selected disk. It requires the user to type `WIPE` and the target path before it writes the disk.
+The Ethernet driver accepts DHCP replies that match the active transaction and MAC address. DHCP does not authenticate its server. Do not use the assigned gateway or DNS data as trusted input.
 
-## Review status
+## Review
 
-Both normal and serial kernel builds pass. Shell syntax and whitespace checks pass. QEMU and `grub-mkrescue` are not installed in this environment. The kernel has not been booted during this review.
+Build both normal and serial kernels after changes to memory, syscall, or device code. Inspect disk writes and user-pointer checks during review. Boot the kernel in QEMU before release.

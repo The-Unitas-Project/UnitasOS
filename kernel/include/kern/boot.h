@@ -6,6 +6,8 @@
 #define MULTIBOOT2_BOOT_MAGIC 0x36d76289u
 #define MULTIBOOT2_TAG_END 0
 #define MULTIBOOT2_TAG_MEMORY_MAP 6
+#define MULTIBOOT2_TAG_ACPI_OLD 14
+#define MULTIBOOT2_TAG_ACPI_NEW 15
 
 struct multiboot2_info {
     uint32_t total_size;
@@ -34,5 +36,6 @@ struct multiboot2_mmap_entry {
 void kernel_main(uint32_t boot_magic, uintptr_t boot_info_address);
 const struct multiboot2_mmap_tag *boot_memory_map(uintptr_t info_address,
                                                   size_t *tag_size);
+const void *boot_acpi_rsdp(uintptr_t info_address, size_t *payload_size);
 
 #endif

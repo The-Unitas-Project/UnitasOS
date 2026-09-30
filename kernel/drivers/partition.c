@@ -4,6 +4,7 @@
 #include <kern/string.h>
 #include <stdbool.h>
 
+/* Partition devices translate bounded child LBAs into the parent disk. */
 #define GPT_HEADER_SIZE_MIN 92u
 #define GPT_ENTRY_SIZE 128u
 #define GPT_ENTRY_LIMIT 128u
@@ -129,11 +130,21 @@ static bool add_partition(struct block_device *parent, unsigned number,
     return true;
 }
 
-static int scan_gpt(struct block_device *device, unsigned *added_out) {
-    *added_out = 0;
-    if (device->sector_count < 2) return 0;
+struct gpt_copy {
+    uint8_t disk_guid[16];
+    uint64_t first_usable;
+    uint64_t last_usable;
+    uint64_t entries_lba;
+    uint32_t entry_count;
+    uint32_t entry_size;
+    uint32_t entries_crc;
+};
+
+static int read_gpt_copy(struct block_device *device, uint64_t header_lba,
+                         uint64_t expected_backup_lba,
+                         struct gpt_copy *copy) {
     uint8_t header[BLOCK_SECTOR_SIZE];
-    if (block_read(device, 1, 1, header) != 0) return -1;
+    if (block_read(device, header_lba, 1, header) != 0) return -1;
     if (memcmp(header, GPT_SIGNATURE, 8) != 0) return 0;
 
     uint32_t header_size = read_le32(header + 12);
@@ -146,30 +157,42 @@ static int scan_gpt(struct block_device *device, unsigned *added_out) {
     uint32_t entry_count = read_le32(header + 80);
     uint32_t entry_size = read_le32(header + 84);
     uint32_t entries_crc = read_le32(header + 88);
+    uint64_t disk_last_lba = device->sector_count - 1;
 
-    if (header_size < GPT_HEADER_SIZE_MIN || header_size > BLOCK_SECTOR_SIZE ||
-        current_lba != 1 || backup_lba == current_lba ||
-        backup_lba >= device->sector_count || first_usable > last_usable ||
-        last_usable >= device->sector_count || entries_lba < 2 ||
-        !entry_count || entry_count > GPT_ENTRY_LIMIT ||
-        entry_size != GPT_ENTRY_SIZE) {
-        log_write(LOG_WARN, "invalid or unsupported GPT header on %s\n", device->name);
+    if (read_le32(header + 8) != 0x00010000 ||
+        read_le32(header + 20) != 0 || header_size < GPT_HEADER_SIZE_MIN ||
+        header_size > BLOCK_SECTOR_SIZE || current_lba != header_lba ||
+        backup_lba != expected_backup_lba || backup_lba == current_lba ||
+        first_usable < 2 || first_usable > last_usable ||
+        last_usable >= disk_last_lba || entries_lba < 2 ||
+        entries_lba >= device->sector_count || !entry_count ||
+        entry_count > GPT_ENTRY_LIMIT || entry_size != GPT_ENTRY_SIZE ||
+        guid_is_zero(header + 56)) {
+        log_write(LOG_WARN, "invalid GPT header on %s at LBA %llu\n",
+                  device->name, (unsigned long long)header_lba);
         return -1;
     }
 
+    /* The header CRC covers its declared size with the CRC field cleared. */
     uint8_t header_copy[BLOCK_SECTOR_SIZE];
     memcpy(header_copy, header, sizeof(header_copy));
     memset(header_copy + 16, 0, 4);
     if (crc32(header_copy, header_size) != header_crc) {
-        log_write(LOG_WARN, "GPT header CRC failed on %s\n", device->name);
+        log_write(LOG_WARN, "GPT header CRC failed on %s at LBA %llu\n",
+                  device->name, (unsigned long long)header_lba);
         return -1;
     }
 
     uint64_t entry_bytes = (uint64_t)entry_count * entry_size;
     uint64_t table_sectors = (entry_bytes + BLOCK_SECTOR_SIZE - 1) /
                              BLOCK_SECTOR_SIZE;
-    if (entries_lba >= first_usable || table_sectors > first_usable - entries_lba ||
-        table_sectors > device->sector_count - entries_lba) {
+    if (table_sectors > device->sector_count - entries_lba ||
+        (current_lba == 1 &&
+         (entries_lba <= current_lba || entries_lba >= first_usable ||
+          table_sectors > first_usable - entries_lba)) ||
+        (current_lba != 1 &&
+         (entries_lba <= last_usable || entries_lba >= current_lba ||
+          table_sectors > current_lba - entries_lba))) {
         log_write(LOG_WARN, "GPT entry array is out of range on %s\n", device->name);
         return -1;
     }
@@ -184,20 +207,88 @@ static int scan_gpt(struct block_device *device, unsigned *added_out) {
         bytes_left -= amount;
     }
     if ((crc ^ 0xffffffffu) != entries_crc) {
-        log_write(LOG_WARN, "GPT entry-array CRC failed on %s\n", device->name);
+        log_write(LOG_WARN, "GPT entry-array CRC failed on %s at LBA %llu\n",
+                  device->name, (unsigned long long)header_lba);
         return -1;
     }
 
+    memcpy(copy->disk_guid, header + 56, sizeof(copy->disk_guid));
+    copy->first_usable = first_usable;
+    copy->last_usable = last_usable;
+    copy->entries_lba = entries_lba;
+    copy->entry_count = entry_count;
+    copy->entry_size = entry_size;
+    copy->entries_crc = entries_crc;
+    return 1;
+}
+
+static bool protective_mbr_present(struct block_device *device) {
+    uint8_t sector[BLOCK_SECTOR_SIZE];
+    if (block_read(device, 0, 1, sector) != 0 ||
+        sector[510] != 0x55 || sector[511] != 0xaa) return false;
+    for (size_t index = 0; index < 4; ++index)
+        if (sector[446 + index * 16 + 4] == 0xee) return true;
+    return false;
+}
+
+static bool gpt_copies_match(const struct gpt_copy *primary,
+                             const struct gpt_copy *backup) {
+    return memcmp(primary->disk_guid, backup->disk_guid, 16) == 0 &&
+           primary->first_usable == backup->first_usable &&
+           primary->last_usable == backup->last_usable &&
+           primary->entry_count == backup->entry_count &&
+           primary->entry_size == backup->entry_size &&
+           primary->entries_crc == backup->entries_crc;
+}
+
+static int scan_gpt(struct block_device *device, unsigned *added_out) {
+    *added_out = 0;
+    if (device->sector_count < 3) return 0;
+
+    /* Validate both copies. Use one valid copy when the other is damaged. */
+    struct gpt_copy primary, backup;
+    int primary_result = read_gpt_copy(device, 1, device->sector_count - 1,
+                                       &primary);
+    if (primary_result == 0 && !protective_mbr_present(device)) return 0;
+    int backup_result = read_gpt_copy(device, device->sector_count - 1, 1,
+                                      &backup);
+    if (primary_result == 1 && backup_result == 1 &&
+        !gpt_copies_match(&primary, &backup)) {
+        log_write(LOG_WARN, "GPT copies disagree on %s\n", device->name);
+        return -1;
+    }
+    const struct gpt_copy *selected;
+    if (primary_result == 1) {
+        selected = &primary;
+        if (backup_result != 1)
+            log_write(LOG_WARN, "using primary GPT on %s; backup is invalid\n",
+                      device->name);
+    } else if (backup_result == 1) {
+        selected = &backup;
+        log_write(LOG_WARN, "using backup GPT on %s\n", device->name);
+    } else if (primary_result == 0 && backup_result == 0) {
+        return 0;
+    } else {
+        return -1;
+    }
+
+    uint64_t entry_bytes = (uint64_t)selected->entry_count * selected->entry_size;
+    uint64_t table_sectors = (entry_bytes + BLOCK_SECTOR_SIZE - 1) /
+                             BLOCK_SECTOR_SIZE;
+    uint8_t sector[BLOCK_SECTOR_SIZE];
     unsigned added = 0;
     for (uint64_t index = 0; index < table_sectors; ++index) {
-        if (block_read(device, entries_lba + index, 1, sector) != 0) return -1;
+        if (block_read(device, selected->entries_lba + index, 1, sector) != 0)
+            return -1;
         for (unsigned slot = 0; slot < BLOCK_SECTOR_SIZE / GPT_ENTRY_SIZE; ++slot) {
-            uint32_t number = (uint32_t)(index * (BLOCK_SECTOR_SIZE / GPT_ENTRY_SIZE) + slot + 1);
+            uint32_t number = (uint32_t)(index *
+                (BLOCK_SECTOR_SIZE / GPT_ENTRY_SIZE) + slot + 1);
             const uint8_t *entry = sector + slot * GPT_ENTRY_SIZE;
-            if (number > entry_count || guid_is_zero(entry)) continue;
+            if (number > selected->entry_count || guid_is_zero(entry)) continue;
             uint64_t first_lba = read_le64(entry + 32);
             uint64_t last_lba = read_le64(entry + 40);
-            if (first_lba < first_usable || last_lba > last_usable) {
+            if (first_lba < selected->first_usable ||
+                last_lba > selected->last_usable) {
                 log_write(LOG_WARN, "skip out-of-range GPT partition %s index %u\n",
                           device->name, number);
                 continue;
@@ -215,6 +306,7 @@ static bool extended_partition(uint8_t type) {
 
 static unsigned scan_extended(struct block_device *device, uint64_t base,
                               uint64_t count, unsigned *partition_number) {
+    /* Extended Boot Record (EBR) links use offsets from the extended partition and may cycle. */
     uint64_t visited[128];
     size_t visited_count = 0;
     uint64_t current = base;

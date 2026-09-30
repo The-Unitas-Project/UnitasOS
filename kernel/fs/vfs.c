@@ -7,13 +7,17 @@
 #define VFS_MAX_HANDLES 64
 #define VFS_PATH_MAX 256
 
+/* A mount binds a path prefix to one filesystem and its private data. */
 struct mount {
     char path[VFS_PATH_MAX];
     const struct filesystem *filesystem;
     void *data;
 };
+/* Duplicate descriptors share one node, file offset, and reference count. */
 struct open_file {
     bool used;
+    bool append;
+    uint32_t references;
     const struct filesystem *filesystem;
     void *node;
     uint64_t offset;
@@ -66,6 +70,7 @@ static struct mount *find_mount(const char *path) {
     struct mount *best = 0;
     size_t path_length = strlen(path);
     size_t best_length = 0;
+    /* A nested mount overrides its parent mount. */
     for (size_t i = 0; i < mount_count; ++i) {
         size_t length = strlen(mounts[i].path);
         if (length < best_length || path_length < length ||
@@ -92,7 +97,10 @@ int vfs_open(const char *path, uint32_t flags, int *handle) {
     void *node = 0;
     int result = mount->filesystem->open(relative, flags, mount->data, &node);
     if (result != 0) return result < 0 ? result : -1;
-    handles[slot] = (struct open_file){ true, mount->filesystem, node, 0 };
+    handles[slot] = (struct open_file) {
+        .used = true, .references = 1, .filesystem = mount->filesystem,
+        .node = node, .offset = 0
+    };
     *handle = (int)slot;
     return 0;
 }
@@ -135,9 +143,41 @@ int vfs_seek(int handle, uint64_t offset) {
     return 0;
 }
 
+int vfs_dup(int handle) {
+    struct open_file *file = get_handle(handle);
+    if (!file || file->references == UINT32_MAX) return -1;
+    ++file->references;
+    return handle;
+}
+
+int vfs_tell(int handle, uint64_t *offset) {
+    struct open_file *file = get_handle(handle);
+    if (!file || !offset) return -1;
+    *offset = file->offset;
+    return 0;
+}
+
+int vfs_set_append(int handle, bool append) {
+    struct open_file *file = get_handle(handle);
+    if (!file) return -1;
+    file->append = append;
+    return 0;
+}
+
+int vfs_is_append(int handle, bool *append) {
+    struct open_file *file = get_handle(handle);
+    if (!file || !append) return -1;
+    *append = file->append;
+    return 0;
+}
+
 int vfs_close(int handle) {
     struct open_file *file = get_handle(handle);
     if (!file) return -1;
+    if (file->references > 1) {
+        --file->references;
+        return 0;
+    }
     if (file->filesystem->close) file->filesystem->close(file->node);
     *file = (struct open_file){0};
     return 0;
@@ -150,6 +190,73 @@ int vfs_unlink(const char *path) {
     const char *relative = strcmp(mount->path, "/") == 0 ? path : path + strlen(mount->path);
     if (!*relative) relative = "/";
     return mount->filesystem->unlink(relative, mount->data);
+}
+
+int vfs_stat(const char *path, struct vfs_stat *result) {
+    if (!valid_path(path) || !result) return -1;
+    struct mount *mount = find_mount(path);
+    if (!mount || !mount->filesystem->stat_path) return -1;
+    size_t prefix_length = strlen(mount->path);
+    const char *relative = prefix_length == 1 ? path : path + prefix_length;
+    if (!*relative) relative = "/";
+    return mount->filesystem->stat_path(relative, mount->data, result);
+}
+
+int vfs_fstat(int handle, struct vfs_stat *result) {
+    struct open_file *file = get_handle(handle);
+    if (!file || !result || !file->filesystem->stat_node) return -1;
+    return file->filesystem->stat_node(file->node, result);
+}
+
+int vfs_mkdir(const char *path, uint32_t mode) {
+    if (!valid_path(path)) return -1;
+    struct mount *mount = find_mount(path);
+    if (!mount || !mount->filesystem->mkdir) return -1;
+    const char *relative = strcmp(mount->path, "/") == 0 ? path :
+                          path + strlen(mount->path);
+    if (!*relative) relative = "/";
+    return mount->filesystem->mkdir(relative, mode, mount->data);
+}
+
+int vfs_rmdir(const char *path) {
+    if (!valid_path(path)) return -1;
+    struct mount *mount = find_mount(path);
+    if (!mount || !mount->filesystem->rmdir) return -1;
+    const char *relative = strcmp(mount->path, "/") == 0 ? path :
+                          path + strlen(mount->path);
+    if (!*relative) relative = "/";
+    return mount->filesystem->rmdir(relative, mount->data);
+}
+
+static const char *mount_relative_path(const struct mount *mount,
+                                       const char *path) {
+    size_t prefix_length = strlen(mount->path);
+    const char *relative = prefix_length == 1 ? path : path + prefix_length;
+    return *relative ? relative : "/";
+}
+
+int vfs_rename(const char *source, const char *destination) {
+    if (!valid_path(source) || !valid_path(destination)) return -1;
+    struct mount *source_mount = find_mount(source);
+    struct mount *destination_mount = find_mount(destination);
+    if (!source_mount || source_mount != destination_mount ||
+        !source_mount->filesystem->rename) return -1;
+    return source_mount->filesystem->rename(
+        mount_relative_path(source_mount, source),
+        mount_relative_path(source_mount, destination), source_mount->data);
+}
+
+int vfs_truncate(int handle, uint64_t size) {
+    struct open_file *file = get_handle(handle);
+    if (!file || !file->filesystem->truncate) return -1;
+    return file->filesystem->truncate(file->node, size);
+}
+
+int vfs_sync(int handle, bool data_only) {
+    struct open_file *file = get_handle(handle);
+    if (!file) return -1;
+    if (!file->filesystem->sync) return 0;
+    return file->filesystem->sync(file->node, data_only);
 }
 
 int vfs_readdir(const char *path, uint64_t index, struct vfs_dirent *entry) {
