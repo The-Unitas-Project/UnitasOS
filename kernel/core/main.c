@@ -147,7 +147,7 @@ void kernel_main(uint32_t magic, uintptr_t boot_info_address) {
     const char *shell_arguments[] = { shell_path };
     for (;;) {
         int status = user_exec(shell_path, 1, shell_arguments);
-        if (status < 0) panic("failed to start /bin/sh user program");
+        if (status < 0) panicf("failed to start %s: error=%d", shell_path, status);
         if (status != 0)
             log_write(LOG_WARN, "user program exited with status %d; restarting shell\n",
                       status);

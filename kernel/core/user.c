@@ -74,6 +74,7 @@
 #define USER_ENOTEMPTY 39
 #define USER_ENOTDIR 20
 #define USER_ENOTTY 25
+#define USER_ENODEV 19
 #define USER_OPEN_APPEND 0x10000ULL
 #define USER_OPEN_EXCLUSIVE 0x20000ULL
 #define USER_OPEN_DIRECTORY 0x40000ULL
@@ -670,6 +671,7 @@ static bool setup_user_stack(size_t argument_count, const char *const arguments[
         (const void *)(image + header->program_offset);
     uint64_t headers_end = header->program_offset +
         (uint64_t)header->program_count * sizeof(struct elf64_program);
+    /* Add program header entries only when a load segment maps the table. */
     for (size_t index = 0; index < header->program_count; ++index) {
         const struct elf64_program *program = &programs[index];
         if (program->type != ELF_PT_LOAD ||
@@ -679,7 +681,6 @@ static bool setup_user_stack(size_t argument_count, const char *const arguments[
             header->program_offset - program->offset;
         break;
     }
-    if (!program_headers) return false;
     size_t word_count = 0;
     values[word_count++] = argument_count;
     for (size_t index = 0; index < argument_count; ++index)
@@ -692,9 +693,11 @@ static bool setup_user_stack(size_t argument_count, const char *const arguments[
     values[word_count++] = (type); \
     values[word_count++] = (value); \
 } while (0)
-    ADD_AUXILIARY(ELF_AT_PHDR, program_headers);
-    ADD_AUXILIARY(ELF_AT_PHENT, sizeof(struct elf64_program));
-    ADD_AUXILIARY(ELF_AT_PHNUM, header->program_count);
+    if (program_headers) {
+        ADD_AUXILIARY(ELF_AT_PHDR, program_headers);
+        ADD_AUXILIARY(ELF_AT_PHENT, sizeof(struct elf64_program));
+        ADD_AUXILIARY(ELF_AT_PHNUM, header->program_count);
+    }
     ADD_AUXILIARY(ELF_AT_PAGESZ, PAGE_SIZE);
     ADD_AUXILIARY(ELF_AT_BASE, 0);
     ADD_AUXILIARY(ELF_AT_FLAGS, 0);
@@ -777,8 +780,8 @@ static long duplicate_user_descriptor(uint64_t old_number, uint64_t minimum,
 
 int user_exec(const char *path, size_t argument_count,
               const char *const arguments[]) {
-    if (!path || path[0] != '/' || strlen(path) >= 256 || current_space.active)
-        return -1;
+    if (!path || path[0] != '/' || strlen(path) >= 256) return -USER_EINVAL;
+    if (current_space.active) return -USER_EBUSY;
     if (!argument_count || argument_count > USER_ARG_COUNT || !arguments)
         return -USER_EINVAL;
     if (strlen(path) >= 5 && memcmp(path, "/dev/", 5) == 0)
@@ -791,23 +794,35 @@ int user_exec(const char *path, size_t argument_count,
         "PATH=/bin", "HOME=/root", "TERM=dumb"
     };
     const struct elf64_header *header = 0;
-    if (!validate_elf(image, image_length, &header) || !make_address_space() ||
-        !load_elf_segments(image, header)) {
+    if (!validate_elf(image, image_length, &header)) {
+        kfree(image);
+        return -USER_EINVAL;
+    }
+    if (!make_address_space()) {
+        kfree(image);
+        return -USER_ENOMEM;
+    }
+    if (!load_elf_segments(image, header)) {
         kfree(image);
         write_cr3(kernel_root);
         free_address_space();
-        return -USER_EINVAL;
+        return -USER_ENOMEM;
     }
     uint64_t stack;
     if (!setup_user_stack(argument_count, arguments,
                           ARRAY_SIZE(initial_environment), initial_environment,
-                          path, image, header, &stack) ||
-        open_standard_descriptors() != 0) {
+                          path, image, header, &stack)) {
+        kfree(image);
+        write_cr3(kernel_root);
+        free_address_space();
+        return -USER_ENOMEM;
+    }
+    if (open_standard_descriptors() != 0) {
         kfree(image);
         close_descriptors();
         write_cr3(kernel_root);
         free_address_space();
-        return -USER_ENOMEM;
+        return -USER_ENODEV;
     }
     uint64_t entry = header->entry;
     kfree(image);
