@@ -12,11 +12,13 @@ struct interrupt_frame {
 
 typedef void (*irq_handler_t)(struct interrupt_frame *frame);
 void interrupts_init(void);
+/* Call after interrupts_init and after loading the Task State Segment (TSS). */
+void interrupts_enable_fault_stacks(void);
 void interrupts_register_user_call(void (*entry)(void));
 /* Handlers run in interrupt context; keep them bounded and non-blocking. */
 void irq_register(uint8_t irq, irq_handler_t handler);
 void pic_unmask(uint8_t irq);
-int interrupt_dispatch(struct interrupt_frame *frame);
+int interrupt_dispatch(struct interrupt_frame *frame, uint64_t fault_address);
 void pic_init(void);
 void pic_eoi(uint8_t irq);
 

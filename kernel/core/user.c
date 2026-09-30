@@ -181,6 +181,11 @@ struct user_space {
 
 static struct tss64 kernel_tss;
 static uint8_t user_kernel_stack[16384] __attribute__((aligned(16)));
+/* Use separate stacks for exceptions that can interrupt a damaged kernel stack. */
+static uint8_t page_fault_stack[16384] __attribute__((aligned(16)));
+static uint8_t double_fault_stack[16384] __attribute__((aligned(16)));
+static uint8_t nmi_stack[16384] __attribute__((aligned(16)));
+static uint8_t machine_check_stack[16384] __attribute__((aligned(16)));
 static struct user_space current_space;
 static uint64_t kernel_root;
 static bool nx_available;
@@ -267,6 +272,10 @@ static void enable_syscall_instruction(void) {
 int user_init(void) {
     memset(&kernel_tss, 0, sizeof(kernel_tss));
     kernel_tss.rsp0 = (uintptr_t)(user_kernel_stack + sizeof(user_kernel_stack));
+    kernel_tss.ist[0] = (uintptr_t)(page_fault_stack + sizeof(page_fault_stack));
+    kernel_tss.ist[1] = (uintptr_t)(double_fault_stack + sizeof(double_fault_stack));
+    kernel_tss.ist[2] = (uintptr_t)(nmi_stack + sizeof(nmi_stack));
+    kernel_tss.ist[3] = (uintptr_t)(machine_check_stack + sizeof(machine_check_stack));
     user_kernel_stack_top = kernel_tss.rsp0;
     kernel_tss.iomap_base = sizeof(kernel_tss);
     uintptr_t base = (uintptr_t)&kernel_tss;
@@ -277,6 +286,7 @@ int user_init(void) {
     gdt_tss_descriptor[1] = base >> 32;
     uint16_t selector = 0x28;
     __asm__ volatile("ltr %0" : : "r"(selector));
+    interrupts_enable_fault_stacks();
     interrupts_register_user_call(user_interrupt_stub);
     kernel_root = read_cr3();
     uint64_t control;

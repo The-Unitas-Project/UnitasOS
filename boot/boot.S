@@ -124,7 +124,9 @@ long_mode_entry:
     hlt
     jmp 2b
 
+.section .data, "aw"
 .align 8
+/* user_init updates the Task State Segment entry in this writable table. */
 gdt64:
     .quad 0
     .quad 0x00af9a000000ffff            /* 64-bit code */
@@ -139,6 +141,8 @@ gdt64_end:
 gdt64_pointer:
     .word gdt64_end - gdt64 - 1
     .long gdt64
+
+.section .rodata, "a"
 .align 4
 mxcsr_default:
     .long 0x1f80

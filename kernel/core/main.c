@@ -100,6 +100,7 @@ const void *boot_acpi_rsdp(uintptr_t address, size_t *payload_size) {
 void kernel_main(uint32_t magic, uintptr_t boot_info_address) {
     console_init();
     log_init();
+    interrupts_init();
     log_write(LOG_INFO, "UnitasOS kernel starting\n");
     if (magic != MULTIBOOT2_BOOT_MAGIC) panicf("unexpected boot protocol magic 0x%x", magic);
 
@@ -109,15 +110,14 @@ void kernel_main(uint32_t magic, uintptr_t boot_info_address) {
     const struct multiboot2_info *boot_info = (const void *)boot_info_address;
     /* Reserve boot data and enable page protections before heap use. */
     pmm_init(map, map_size, boot_info_address, boot_info->total_size);
-    if (paging_init() != 0) panic("CPU lacks NX memory protection support");
+    if (user_init() != 0) panic("failed to set up user-mode entry");
+    if (paging_init() != 0) panic("failed to set up kernel page protections");
     size_t rsdp_size = 0;
     const void *rsdp = boot_acpi_rsdp(boot_info_address, &rsdp_size);
     if (acpi_init(rsdp, rsdp_size) != 0)
         log_write(LOG_WARN, "ACPI power controls are unavailable\n");
     heap_init();
     /* Start storage before root selection, but defer /dev until after the mount. */
-    interrupts_init();
-    if (user_init() != 0) panic("failed to set up user-mode entry");
     pic_init();
     serial_interrupts_init();
     platform_storage_init();

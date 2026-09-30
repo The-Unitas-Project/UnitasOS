@@ -93,6 +93,8 @@ isr_common:
     pushq %r14
     pushq %r15
     movq %rsp, %rdi
+    /* Read CR2 before the C handler can cause another page fault. */
+    movq %cr2, %rsi
     movq %rsp, %rbx
     andq $-16, %rsp
     call interrupt_dispatch

@@ -20,6 +20,7 @@ extern void (*isr_stub_table[48])(void);
 extern void isr_default(void);
 static struct idt_gate idt[256];
 static irq_handler_t irq_handlers[16];
+static bool fatal_exception_active;
 
 static void set_gate(unsigned vector, void (*entry)(void)) {
     uint64_t address = (uintptr_t)entry;
@@ -37,6 +38,13 @@ void interrupts_init(void) {
     __asm__ volatile("lidt %0" : : "m"(pointer));
 }
 
+void interrupts_enable_fault_stacks(void) {
+    idt[14].ist = 1;
+    idt[8].ist = 2;
+    idt[2].ist = 3;
+    idt[18].ist = 4;
+}
+
 void interrupts_register_user_call(void (*entry)(void)) {
     if (!entry) return;
     uint64_t address = (uintptr_t)entry;
@@ -51,10 +59,28 @@ void irq_register(uint8_t irq, irq_handler_t handler) {
     if (irq < ARRAY_SIZE(irq_handlers)) irq_handlers[irq] = handler;
 }
 
-int interrupt_dispatch(struct interrupt_frame *frame) {
+int interrupt_dispatch(struct interrupt_frame *frame, uint64_t fault_address) {
     if (frame->vector < 32) {
         if ((frame->cs & 3) == 3 &&
             user_handle_exception(frame->vector, frame->rip)) return 1;
+        if (fatal_exception_active) {
+            cpu_disable_interrupts();
+            for (;;) cpu_halt();
+        }
+        fatal_exception_active = true;
+        if (frame->vector == 14)
+            panicf("CPU exception vector=%llu error=0x%llx rip=0x%llx cr2=0x%llx present=%llu write=%llu user=%llu reserved=%llu fetch=%llu cs=0x%llx rflags=0x%llx",
+                   (unsigned long long)frame->vector,
+                   (unsigned long long)frame->error_code,
+                   (unsigned long long)frame->rip,
+                   (unsigned long long)fault_address,
+                   (unsigned long long)(frame->error_code & 1),
+                   (unsigned long long)((frame->error_code >> 1) & 1),
+                   (unsigned long long)((frame->error_code >> 2) & 1),
+                   (unsigned long long)((frame->error_code >> 3) & 1),
+                   (unsigned long long)((frame->error_code >> 4) & 1),
+                   (unsigned long long)frame->cs,
+                   (unsigned long long)frame->rflags);
         panicf("CPU exception vector=%llu error=0x%llx rip=0x%llx",
                (unsigned long long)frame->vector,
                (unsigned long long)frame->error_code,
