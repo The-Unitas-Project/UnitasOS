@@ -44,7 +44,7 @@ The bootstrap maps the first 4 GiB with 2 MiB pages. Before it starts the heap, 
 
 The read-only `/proc` file system provides `/proc/meminfo`, `/proc/uptime`, `/proc/cpuinfo`, `/proc/mounts`, `/proc/partitions`, `/proc/self/status`, and `/proc/net/ipv4`. Each open file returns a snapshot. The partition file lists each block device name and its sector count. The network file reports link and DHCP state.
 
-The kernel starts `/bin/sh`. This path is GNU Bash in `sh` compatibility mode. The power commands use the Linux `reboot` system call. The kernel flushes block devices before a power change. Shutdown uses ACPI S5 and requires valid tables with an S5 state and legacy PM1 I/O registers. Reboot uses the FADT reset register when firmware marks it as supported, then tries the keyboard controller. Unitas does not have user IDs or power-control permissions yet.
+At boot, the kernel checks `/bin/systemd`, `/sbin/init`, `/lib/systemd/systemd`, `/bin/init`, and `/bin/sh`, in that order. It selects the first regular file. The current build does not include systemd, so it selects GNU Bash through `/bin/sh`. The power commands use the Linux `reboot` system call. The kernel flushes block devices before a power change. Shutdown uses ACPI S5 and requires valid tables with an S5 state and legacy PM1 I/O registers. Reboot uses the FADT reset register when firmware marks it as supported, then tries the keyboard controller. Unitas does not have user IDs or power-control permissions yet.
 
 QEMU starts an Intel 82540EM network device by default. The driver polls Ethernet frames and uses DHCP to request an IPv4 address, gateway, and DNS server. The current network code does not provide general UDP, ARP, TCP, sockets, or application network access.
 

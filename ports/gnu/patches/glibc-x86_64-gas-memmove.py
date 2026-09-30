@@ -14,43 +14,31 @@ if source.count(old_size) == 1:
 elif source.count(new_size) != 1:
     raise SystemExit(f"Unexpected prefetch size macro in {path}")
 
-load_replacements = {
-    "# define LARGE_LOAD_SIZE (VEC_SIZE * 2)": (
-        "# define LARGE_LOAD_SIZE 128\n"
-        "# define LARGE_LOAD_COUNT 32"
-    ),
-    "# define LARGE_LOAD_SIZE (VEC_SIZE * 4)": (
-        "# if VEC_SIZE == 32\n"
-        "#  define LARGE_LOAD_SIZE 128\n"
-        "#  define LARGE_LOAD_COUNT 32\n"
-        "# else\n"
-        "#  define LARGE_LOAD_SIZE 64\n"
-        "#  define LARGE_LOAD_COUNT 64\n"
-        "# endif"
-    ),
-}
-intermediate_loads = {
-    "# define LARGE_LOAD_SIZE VEC_SIZE * 2\n"
-    "# define LARGE_LOAD_COUNT PAGE_SIZE / VEC_SIZE / 2": (
-        "# define LARGE_LOAD_SIZE 128\n"
-        "# define LARGE_LOAD_COUNT 32"
-    ),
-    "# define LARGE_LOAD_SIZE VEC_SIZE * 4\n"
-    "# define LARGE_LOAD_COUNT PAGE_SIZE / VEC_SIZE / 4": (
-        "# if VEC_SIZE == 32\n"
-        "#  define LARGE_LOAD_SIZE 128\n"
-        "#  define LARGE_LOAD_COUNT 32\n"
-        "# else\n"
-        "#  define LARGE_LOAD_SIZE 64\n"
-        "#  define LARGE_LOAD_COUNT 64\n"
-        "# endif"
-    ),
-}
-for old, new in (*intermediate_loads.items(), *load_replacements.items()):
-    if source.count(old) == 1:
-        source = source.replace(old, new)
-    elif source.count(new) != 1:
-        raise SystemExit(f"Unexpected large-load macro in {path}")
+old_loads = (
+    "#if VEC_SIZE == 64\n"
+    "# define LARGE_LOAD_SIZE (VEC_SIZE * 2)\n"
+    "#else\n"
+    "# define LARGE_LOAD_SIZE (VEC_SIZE * 4)\n"
+    "#endif"
+)
+new_loads = (
+    "#if VEC_SIZE == 64\n"
+    "# define LARGE_LOAD_SIZE 128\n"
+    "# define LARGE_LOAD_COUNT 32\n"
+    "#else\n"
+    "# if VEC_SIZE == 32\n"
+    "#  define LARGE_LOAD_SIZE 128\n"
+    "#  define LARGE_LOAD_COUNT 32\n"
+    "# else\n"
+    "#  define LARGE_LOAD_SIZE 64\n"
+    "#  define LARGE_LOAD_COUNT 64\n"
+    "# endif\n"
+    "#endif"
+)
+if source.count(old_loads) == 1:
+    source = source.replace(old_loads, new_loads)
+elif source.count(new_loads) != 1:
+    raise SystemExit(f"Unexpected large-load macro in {path}")
 
 old_count = "movl\t$(PAGE_SIZE / LARGE_LOAD_SIZE), %ecx"
 intermediate_count = "movl\t$(LARGE_LOAD_COUNT), %ecx"
@@ -69,6 +57,8 @@ expected = 7
 if (macro.count("PREFETCH ((") == expected and
         macro.count("))base") == expected):
     pass
+elif macro.count(")base)") == expected:
+    macro = macro.replace(")base)", "))base")
 elif (macro.count("PREFETCH ((") == 0 and
       macro.count("PREFETCH (") == expected and
       macro.count(")base") == expected):

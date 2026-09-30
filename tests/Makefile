@@ -2,7 +2,8 @@ CC ?= cc
 CFLAGS ?= -std=c11 -Wall -Wextra -Werror -O2
 BUILD := build
 TESTS := $(BUILD)/test_ring_buffer $(BUILD)/test_vfs $(BUILD)/test_ram_fat32 \
-         $(BUILD)/test_block $(BUILD)/test_heap $(BUILD)/test_pmm
+         $(BUILD)/test_block $(BUILD)/test_heap $(BUILD)/test_pmm \
+         $(BUILD)/test_init
 
 .PHONY: all run clean
 all: $(TESTS)
@@ -31,8 +32,13 @@ $(BUILD)/test_pmm: test_pmm.c ../kernel/mm/pmm.c ../kernel/core/string.c
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I../kernel/include $^ -o $@
 
+$(BUILD)/test_init: test_init.c ../kernel/core/init.c ../kernel/include/kern/init.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I../kernel/include $< ../kernel/core/init.c -o $@
+
 run: all
 	@set -e; for test in $(TESTS); do ./$$test; done
+	python3 -m unittest discover -s . -p 'test_*.py'
 
 clean:
 	rm -rf $(BUILD)

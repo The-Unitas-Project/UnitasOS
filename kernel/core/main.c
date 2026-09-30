@@ -3,6 +3,7 @@
 #include <kern/console.h>
 #include <kern/driver.h>
 #include <kern/fat32_disk.h>
+#include <kern/init.h>
 #include <kern/interrupts.h>
 #include <kern/io.h>
 #include <kern/log.h>
@@ -12,9 +13,17 @@
 #include <kern/procfs.h>
 #include <kern/ramfs.h>
 #include <kern/serial.h>
+#include <kern/string.h>
 #include <kern/timer.h>
 #include <kern/user.h>
 #include <kern/vfs.h>
+
+static int init_path_available(const char *path, void *context) {
+    (void)context;
+    struct vfs_stat status;
+    if (vfs_stat(path, &status) != 0) return 0;
+    return (status.mode & 0170000) == 0100000;
+}
 
 const struct multiboot2_mmap_tag *boot_memory_map(uintptr_t address,
                                                   size_t *tag_size) {
@@ -139,14 +148,15 @@ void kernel_main(uint32_t magic, uintptr_t boot_info_address) {
     cpu_enable_interrupts();
     log_write(LOG_INFO, "interrupts enabled. Timer at 100 Hz\n");
     console_write("Welcome to GNU/Unitas\n", sizeof("Welcome to GNU/Unitas\n") - 1);
-    log_write(LOG_INFO, "starting user shell\n");
-    const char *shell_path = "/bin/sh";
-    const char *shell_arguments[] = { shell_path };
+    const char *init_path = unitas_select_init(init_path_available, 0);
+    if (!init_path) panic("no init program is available");
+    log_write(LOG_INFO, "starting init program %s\n", init_path);
+    const char *init_arguments[] = { init_path };
     for (;;) {
-        int status = user_exec(shell_path, 1, shell_arguments);
-        if (status < 0) panicf("failed to start %s: error=%d", shell_path, status);
-        if (status != 0)
-            log_write(LOG_WARN, "user program exited with status %d; restarting shell\n",
-                      status);
+        int status = user_exec(init_path, 1, init_arguments);
+        if (status < 0) panicf("failed to start init %s: error=%d", init_path, status);
+        if (strcmp(init_path, "/bin/sh") != 0)
+            panicf("init program %s exited with status %d", init_path, status);
+        log_write(LOG_WARN, "shell exited with status %d; restarting it\n", status);
     }
 }

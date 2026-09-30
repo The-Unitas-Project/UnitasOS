@@ -1297,7 +1297,7 @@ static long syscall_uname(uint64_t address) {
     if (!validate_user_range(address, sizeof(struct unitas_utsname), true))
         return -USER_EFAULT;
     struct unitas_utsname name = {0};
-    set_uts_field(name.system, "UnitasOS");
+    set_uts_field(name.system, "Linux");
     set_uts_field(name.node, "unitas");
     set_uts_field(name.release, "0.1");
     set_uts_field(name.version, "development");
@@ -1957,6 +1957,8 @@ long user_linux_syscall(uint64_t number, uint64_t first, uint64_t second,
     case __NR_gettid:
     case __NR_set_tid_address:
         return 1;
+    case __NR_getppid:
+        return 0;
     case __NR_getuid:
     case __NR_getgid:
     case __NR_geteuid:

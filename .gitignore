@@ -1,3 +1,4 @@
 /build/
 /build-serial/
 /tests/build/
+/tests/__pycache__/

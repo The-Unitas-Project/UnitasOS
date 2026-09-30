@@ -32,7 +32,7 @@ Check this goal by requesting a DHCP lease and exchanging data with a test servi
 
 ## Userland
 
-The default `make` target builds static GNU libc, GNU Coreutils, and Bash. It embeds these programs in the kernel image. It provides `/bin/bash` and `/bin/sh` as names for Bash. The kernel displays `Welcome to GNU/Unitas` before it starts Bash.
+The default `make` target builds static GNU libc, GNU Coreutils, and Bash. It embeds these programs in the kernel image. It provides `/bin/bash` and `/bin/sh` as names for Bash. The kernel displays `Welcome to GNU/Unitas` before it checks for an init program. Add and validate systemd as PID 1.
 
 Complete process control so Bash can run external programs. Complete file, directory, terminal, signal, memory, time, and locale behavior. Run GNU programs from the persistent root file system. Check the ABI before you claim support for GNU libc, GNU Coreutils, Bash, or POSIX shell scripts.
 
