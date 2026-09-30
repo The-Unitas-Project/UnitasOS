@@ -2184,7 +2184,7 @@ int user_handle_exception(uint64_t vector, uint64_t rip) {
 static bool userland_is_installed(void) {
     static const char *const paths[] = {
         "/bin/hello.elf", "/bin/reboot", "/bin/poweroff", "/bin/shutdown",
-        "/bin/sh"
+        "/bin/bash", "/bin/sh"
     };
     for (size_t index = 0; index < sizeof(paths) / sizeof(paths[0]); ++index) {
         int handle;

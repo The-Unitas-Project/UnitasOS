@@ -141,9 +141,6 @@ void kernel_main(uint32_t magic, uintptr_t boot_info_address) {
     console_write("Welcome to GNU/Unitas\n", sizeof("Welcome to GNU/Unitas\n") - 1);
     log_write(LOG_INFO, "starting user shell\n");
     const char *shell_path = "/bin/sh";
-    struct vfs_stat bash_status;
-    /* Prefer Bash when the root file system contains its image. */
-    if (vfs_stat("/bin/bash", &bash_status) == 0) shell_path = "/bin/bash";
     const char *shell_arguments[] = { shell_path };
     for (;;) {
         int status = user_exec(shell_path, 1, shell_arguments);

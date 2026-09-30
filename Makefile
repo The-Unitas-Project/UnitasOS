@@ -43,7 +43,7 @@ FIRMWARE ?= bios
 IMAGE ?= build/unitasos-installed.raw
 VDI ?= build/unitasos-installed.vdi
 ROOT_FS ?= ext4
-GNU_BIN_DIR ?=
+GNU_BIN_DIR ?= $(abspath build/gnu-bin)
 ifeq ($(serial),1)
 BUILD := build-serial
 else
@@ -76,7 +76,7 @@ USER_OBJECTS := $(BUILD)/user/crt0.o $(BUILD)/user/syscall.o \
                 $(BUILD)/user/string.o $(BUILD)/user/stdlib.o \
                 $(BUILD)/user/hello.o
 USERLAND_IMAGES := $(BUILD)/user/reboot $(BUILD)/user/poweroff \
-                   $(BUILD)/user/shutdown $(BUILD)/user/sh
+                   $(BUILD)/user/shutdown
 GNU_PROGRAMS := $(if $(strip $(GNU_BIN_DIR)),$(wildcard $(GNU_BIN_DIR)/*))
 USER_POWER_IMAGES := $(BUILD)/user/reboot $(BUILD)/user/poweroff \
                      $(BUILD)/user/shutdown
@@ -88,12 +88,11 @@ USER_COMMON_OBJECTS := $(BUILD)/user/crt0.o $(BUILD)/user/syscall.o \
 USER_ASM_OBJECTS := $(BUILD)/user/crt0.o $(BUILD)/user/syscall.o
 USER_C_OBJECTS := $(BUILD)/user/unistd.o $(BUILD)/user/dirent.o $(BUILD)/user/stdio.o \
                   $(BUILD)/user/string.o $(BUILD)/user/stdlib.o \
-                  $(BUILD)/user/hello.o $(BUILD)/user/power.o \
-                  $(BUILD)/user/sh.o
+                  $(BUILD)/user/hello.o $(BUILD)/user/power.o
 DEPFILES += $(USER_C_OBJECTS:.o=.d)
 
-.PHONY: all userland gnu-source gnu-glibc gnu-coreutils gnu-bash gnu-userland gnu-system iso run run-qemu run-vbox disk-image test install install-image install-vdi partition-edit clean
-all: $(KERNEL)
+.PHONY: all kernel-build userland gnu-source gnu-glibc gnu-coreutils gnu-bash gnu-userland gnu-system iso run run-qemu run-vbox disk-image test install install-image install-vdi partition-edit clean
+all: kernel-build
 userland: $(BUILD)/user/hello.elf $(USERLAND_IMAGES)
 
 gnu-source:
@@ -109,11 +108,13 @@ gnu-bash:
 	$(MAKE) -C ports/gnu bash
 
 gnu-userland:
-	$(MAKE) -C ports/gnu userland GNU_BIN_DIR="$(abspath $(if $(strip $(GNU_BIN_DIR)),$(GNU_BIN_DIR),build/gnu-bin))"
+	$(MAKE) -C ports/gnu userland GNU_BIN_DIR="$(abspath $(GNU_BIN_DIR))"
 
-gnu-system:
-	$(MAKE) GNU_BIN_DIR="$(abspath $(if $(strip $(GNU_BIN_DIR)),$(GNU_BIN_DIR),build/gnu-bin))" gnu-userland
-	$(MAKE) GNU_BIN_DIR="$(abspath $(if $(strip $(GNU_BIN_DIR)),$(GNU_BIN_DIR),build/gnu-bin))" all
+gnu-system: all
+
+kernel-build:
+	$(MAKE) GNU_BIN_DIR="$(abspath $(GNU_BIN_DIR))" gnu-userland
+	$(MAKE) GNU_BIN_DIR="$(abspath $(GNU_BIN_DIR))" $(KERNEL)
 
 $(KERNEL): $(OBJECTS) linker.ld
 	@mkdir -p $(@D)
@@ -145,10 +146,6 @@ $(USER_POWER_IMAGES): $(BUILD)/user/%: $(USER_COMMON_OBJECTS) \
 	$(LD) -nostdlib -z noexecstack -T user/hello.ld -o $@ \
 	  $(USER_COMMON_OBJECTS) $(BUILD)/user/power.o
 
-$(BUILD)/user/sh: $(USER_COMMON_OBJECTS) $(BUILD)/user/sh.o user/hello.ld
-	$(LD) -nostdlib -z noexecstack -T user/hello.ld -o $@ \
-	  $(USER_COMMON_OBJECTS) $(BUILD)/user/sh.o
-
 $(BUILD)/userland_blob.S: $(BUILD)/user/hello.elf $(USERLAND_IMAGES) \
                           $(GNU_PROGRAMS) tools/embed-userland.py
 	@mkdir -p $(@D)
@@ -160,7 +157,7 @@ $(BUILD)/kernel/userland_blob.o: $(BUILD)/userland_blob.S
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(ASFLAGS) -c $< -o $@
 
-iso: $(KERNEL)
+iso: kernel-build
 	@mkdir -p $(BUILD)/iso/boot/grub $(BUILD)/iso/tools
 	cp $(KERNEL) $(BUILD)/iso/boot/kernel.elf
 	cp boot/grub.cfg $(BUILD)/iso/boot/grub/grub.cfg
@@ -187,18 +184,18 @@ disk-image:
 test:
 	$(MAKE) -C tests run
 
-install: $(KERNEL)
+install: kernel-build
 	@test -n "$(DEVICE)" || { echo 'Set DEVICE to a whole disk such as /dev/sda or /dev/nvme0n1'; exit 2; }
 	UNITAS_KERNEL_IMAGE="$(KERNEL)" UNITAS_USERLAND_DIR="$(BUILD)/user" \
 	  UNITAS_GNU_BIN_DIR="$(GNU_BIN_DIR)" \
 	  ./tools/install.sh "$(DEVICE)" "$(MODE)" "$(TABLE)" "$(ROOT_FS)"
 
-install-image: $(KERNEL)
+install-image: kernel-build
 	UNITAS_KERNEL_IMAGE="$(KERNEL)" UNITAS_USERLAND_DIR="$(BUILD)/user" \
 	  UNITAS_GNU_BIN_DIR="$(GNU_BIN_DIR)" \
 	  ./tools/install-image.sh "$(IMAGE)" "$(MODE)" "$(TABLE)" "$(ROOT_FS)"
 
-install-vdi: $(KERNEL)
+install-vdi: kernel-build
 	UNITAS_KERNEL_IMAGE="$(KERNEL)" UNITAS_USERLAND_DIR="$(BUILD)/user" \
 	  UNITAS_GNU_BIN_DIR="$(GNU_BIN_DIR)" \
 	  ./tools/install-vdi.sh "$(VDI)" "$(MODE)" "$(TABLE)" "$(ROOT_FS)"

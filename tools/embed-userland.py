@@ -33,8 +33,10 @@ def main():
     records = []
     images = {}
     for index, image in enumerate(arguments.image):
-        path = Path(image).resolve()
-        name = Path(image).name
+        image_path = Path(image)
+        name = image_path.name
+        # Keep the command name from a symlink while sharing its target image.
+        path = image_path.resolve()
         if not name or any(not (char.isascii() and
                                 (char.isalnum() or char in "._+-[]"))
                            for char in name):

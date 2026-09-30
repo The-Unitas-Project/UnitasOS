@@ -204,8 +204,11 @@ cp "$userland_dir/hello.elf" "$mountpoint/bin/hello.elf"
 cp "$userland_dir/reboot" "$mountpoint/bin/reboot"
 cp "$userland_dir/poweroff" "$mountpoint/bin/poweroff"
 cp "$userland_dir/shutdown" "$mountpoint/bin/shutdown"
-cp "$userland_dir/sh" "$mountpoint/bin/sh"
 if [ -n "$gnu_bin_dir" ]; then
+    if [ ! -x "$gnu_bin_dir/bash" ] || [ ! -x "$gnu_bin_dir/sh" ]; then
+        printf '%s\n' 'GNU Bash and its sh command name are required.' >&2
+        exit 1
+    fi
     for program in "$gnu_bin_dir"/*; do
         [ -f "$program" ] && [ -x "$program" ] || continue
         program_name=${program##*/}

@@ -8,7 +8,7 @@ Use this guide when you change kernel code. Write comments, documentation, and d
 
 `kernel/core/main.c` checks the boot data and starts the physical page allocator. `kernel/mm/paging.c` then splits the kernel image into 4 KiB pages. It makes text read-only and executable, and it makes data writable and non-executable. This step requires CPU support for NX.
 
-The kernel starts the heap, mounts a disk FAT32 root when it finds one, or formats the RAM FAT32 file system. It mounts `/proc` and installs the built user programs. It then sets up the TSS and user entry code. The platform drivers start the timer, input, storage, partition scan, network, and device file system. The kernel enables interrupts and starts `/bin/sh` in user mode. Keep command parsing and system utilities in user programs.
+The kernel starts the heap, mounts a disk FAT32 root when it finds one, or formats the RAM FAT32 file system. It mounts `/proc` and installs the built user programs. It then sets up the TSS and user entry code. The platform drivers start the timer, input, storage, partition scan, network, and device file system. The kernel enables interrupts and starts GNU Bash through `/bin/sh`. Keep command parsing and system utilities in user programs.
 
 Keep interrupt handlers short. Keep hardware access in a driver or architecture file. Send device events to a kernel service when possible.
 
@@ -36,7 +36,7 @@ Use `vfs_register` before `vfs_mount`. Keep each file system descriptor and moun
 
 ## Build
 
-Run `make` to build the kernel. Run `make serial=1` to build with serial input and output. Run `make iso` to package the kernel with GRUB. Run `make run` to boot the ISO with QEMU.
+Run `make` to build GNU libc, GNU Coreutils, Bash, and the kernel. Run `make serial=1` to build the same system with serial input and output. Run `make iso` to package the kernel with GRUB. Run `make run` to boot the ISO with QEMU.
 
 Build both serial modes when a change affects shared code or configuration.
 

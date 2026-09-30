@@ -476,7 +476,7 @@ static bool parse_volume(struct block_device *device,
 static bool installed_programs_exist(struct fat32_volume *volume) {
     static const char *const paths[] = {
         "/bin/hello.elf", "/bin/reboot", "/bin/poweroff", "/bin/shutdown",
-        "/bin/sh"
+        "/bin/bash", "/bin/sh"
     };
     for (size_t index = 0; index < sizeof(paths) / sizeof(paths[0]); ++index) {
         struct fat32_directory_entry entry;

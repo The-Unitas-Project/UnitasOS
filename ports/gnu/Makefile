@@ -105,6 +105,7 @@ GLIBC_PATCH_STAMP := $(GLIBC_DIR)/.unitas-patched
 GLIBC_ASM_PATCH_STAMP := $(GLIBC_DIR)/.unitas-memcmp-patched
 GLIBC_MEMMOVE_PATCH_STAMP := $(GLIBC_DIR)/.unitas-memmove-patched
 COREUTILS_CONFIG_STAMP := $(COREUTILS_BUILD)/.unitas-configured
+COREUTILS_PATCH_STAMP := $(COREUTILS_DIR)/.unitas-patched
 COREUTILS_INSTALL_STAMP := $(SYSROOT)/.unitas-coreutils-installed
 BASH_CONFIG_STAMP := $(BASH_BUILD)/.unitas-configured
 BASH_INSTALL_STAMP := $(SYSROOT)/.unitas-bash-installed
@@ -168,6 +169,11 @@ $(GLIBC_DIR)/.unitas-source: $(GLIBC_ARCHIVE)
 $(COREUTILS_DIR)/.unitas-source: $(COREUTILS_ARCHIVE)
 	mkdir -p "$(SOURCE_ROOT)"
 	tar -xf "$<" -C "$(SOURCE_ROOT)"
+	touch "$@"
+
+$(COREUTILS_PATCH_STAMP): $(COREUTILS_DIR)/.unitas-source \
+	                         $(ROOT)/ports/gnu/patches/coreutils-compat.py
+	$(PYTHON) "$(ROOT)/ports/gnu/patches/coreutils-compat.py" "$(COREUTILS_DIR)"
 	touch "$@"
 
 $(BASH_DIR)/.unitas-source: $(BASH_ARCHIVE)
@@ -356,7 +362,7 @@ endif
 BASH_CC := $(COREUTILS_CC)
 BASH_COMPILER_DEP := $(COREUTILS_COMPILER_DEP)
 
-$(COREUTILS_CONFIG_STAMP): $(COREUTILS_DIR)/.unitas-source $(GLIBC_INSTALL_STAMP) $(COREUTILS_COMPILER_DEP)
+$(COREUTILS_CONFIG_STAMP): $(COREUTILS_PATCH_STAMP) $(GLIBC_INSTALL_STAMP) $(COREUTILS_COMPILER_DEP)
 	rm -rf "$(COREUTILS_BUILD)"
 	mkdir -p "$(COREUTILS_BUILD)"
 	# Build only static tools. stdbuf requires a shared library.
@@ -372,6 +378,9 @@ $(COREUTILS_CONFIG_STAMP): $(COREUTILS_DIR)/.unitas-source $(GLIBC_INSTALL_STAMP
 coreutils: $(COREUTILS_INSTALL_STAMP)
 
 $(COREUTILS_INSTALL_STAMP): $(COREUTILS_CONFIG_STAMP)
+	# Generate headers before parallel compilation starts.
+	printf '%s\n' 'unitas-built-sources: $$(BUILT_SOURCES)' | \
+	  $(GMAKE) -C "$(COREUTILS_BUILD)" -f Makefile -f - unitas-built-sources
 	$(GMAKE) -C "$(COREUTILS_BUILD)" lib/libcoreutils.a
 	# Keep Coreutils' private time helper local to avoid a glibc symbol conflict.
 	$(GNU_OBJCOPY) --localize-symbol=__mktime_internal "$(COREUTILS_BUILD)/lib/libcoreutils_a-mktime.o"
