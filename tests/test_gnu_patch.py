@@ -63,6 +63,18 @@ class GlibcPatchTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("Unexpected large-load macro", result.stderr)
 
+    def test_patch_rejects_unknown_startup_layout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_source(root)
+            start_path = root / "sysdeps/x86_64/start.S"
+            start_path.write_text("\tmov $main, %RDI_LP")
+            result = subprocess.run(
+                ["python3", str(PATCHER), str(root)], capture_output=True, text=True
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Unexpected x86-64 startup code", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

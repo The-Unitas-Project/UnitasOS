@@ -67,11 +67,7 @@ GLIBC_HEADERS := $(GNU_UAPI_INCLUDE)
 GLIBC_COMPILER_DEP := $(GLIBC_CC)
 GLIBC_HEADER_DEP := $(HEADER_ROOT)/.unitas-headers
 else
-ifeq ($(filter command environment override,$(origin CC)),)
 GNU_NATIVE_CC ?= $(if $(HOST_CC),$(HOST_CC),$(HOST_CLANG))
-else
-GNU_NATIVE_CC ?= $(CC)
-endif
 GNU_BUILD_CC ?= $(GNU_NATIVE_CC)
 GNU_BUILD_CXX ?= $(if $(HOST_CXX),$(HOST_CXX),$(if $(HOST_CLANGXX),$(HOST_CLANGXX),c++))
 GNU_AS ?= as

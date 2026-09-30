@@ -2,3 +2,7 @@
 /build-serial/
 /tests/build/
 /tests/__pycache__/
+/config.log
+/config.status
+/config.cache
+.DS_Store
